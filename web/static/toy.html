@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pupbox Toy Mode</title>
+    <link rel="stylesheet" href="/toy.css" />
+  </head>
+  <body>
+    <main class="toy-shell" aria-labelledby="toy-title">
+      <section class="toy-stage">
+        <div class="toy-status" id="modePill">连接中</div>
+        <div class="toy-dog" aria-hidden="true">
+          <div class="toy-ear toy-ear-left"></div>
+          <div class="toy-ear toy-ear-right"></div>
+          <div class="toy-face">
+            <div class="toy-eye toy-eye-left"></div>
+            <div class="toy-eye toy-eye-right"></div>
+            <div class="toy-snout">
+              <div class="toy-nose"></div>
+              <div class="toy-mouth"></div>
+            </div>
+          </div>
+          <div class="toy-collar"></div>
+        </div>
+        <h1 id="toy-title">豆豆</h1>
+        <p class="toy-state" id="toyState">点一下叫醒豆豆</p>
+        <button class="paw-button" id="recordButton" type="button" aria-label="按住说话">
+          <span class="paw-dot"></span>
+          <span id="recordLabel">叫醒</span>
+        </button>
+        <p class="toy-hint" id="voiceNote">语音能力检测中</p>
+      </section>
+    </main>
+
+    <script src="/toy.js" type="module"></script>
+  </body>
+</html>

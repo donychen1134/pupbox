@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pupbox</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="stage" aria-labelledby="dog-name">
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">PUPBOX</p>
+            <h1 id="dog-name">豆豆</h1>
+          </div>
+          <div class="status-pill" id="modePill">连接中</div>
+        </div>
+
+        <div class="dog-scene" aria-hidden="true">
+          <div class="dog">
+            <div class="ear ear-left"></div>
+            <div class="ear ear-right"></div>
+            <div class="face">
+              <div class="eye eye-left"></div>
+              <div class="eye eye-right"></div>
+              <div class="snout">
+                <div class="nose"></div>
+                <div class="mouth"></div>
+              </div>
+            </div>
+            <div class="collar"></div>
+          </div>
+          <div class="sound-rings">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+
+        <div class="reply-surface" id="replyText">汪，豆豆在这里。</div>
+
+        <div class="activity-tray" id="activityTray" aria-label="活动"></div>
+
+        <div class="controls">
+          <button class="mic-button" id="recordButton" type="button">
+            <span class="mic-icon"></span>
+            <span id="recordLabel">按住说话</span>
+          </button>
+          <form class="text-form" id="textForm">
+            <input id="textInput" name="text" autocomplete="off" placeholder="和豆豆说一句" />
+            <button type="submit">发送</button>
+          </form>
+        </div>
+        <div class="voice-note" id="voiceNote">语音能力检测中</div>
+      </section>
+
+      <aside class="debug-panel" aria-labelledby="debug-title">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">TRACE</p>
+            <h2 id="debug-title">对话记录</h2>
+          </div>
+          <button class="ghost-button" id="clearButton" type="button">清空</button>
+        </div>
+        <div class="meta-grid">
+          <div>
+            <span>模式</span>
+            <strong id="modeText">-</strong>
+          </div>
+          <div>
+            <span>来源</span>
+            <strong id="sourceText">-</strong>
+          </div>
+        </div>
+        <div class="log-list" id="logList"></div>
+      </aside>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
