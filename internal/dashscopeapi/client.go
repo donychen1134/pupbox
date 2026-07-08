@@ -21,6 +21,7 @@ type Client struct {
 	apiKey     string
 	baseURL    string
 	http       *http.Client
+	chatModel  string
 	sttModel   string
 	ttsModel   string
 	ttsVoice   string
@@ -33,6 +34,7 @@ type Client struct {
 type Config struct {
 	APIKey     string
 	BaseURL    string
+	ChatModel  string
 	STTModel   string
 	TTSModel   string
 	TTSVoice   string
@@ -46,6 +48,7 @@ func NewFromEnv() *Client {
 	return New(Config{
 		APIKey:     envAny("CHAT_ARCHIVE_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
 		BaseURL:    envDefault("PUPBOX_DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com"),
+		ChatModel:  envDefault("PUPBOX_DASHSCOPE_CHAT_MODEL", "qwen-turbo"),
 		STTModel:   envDefault("PUPBOX_DASHSCOPE_STT_MODEL", "qwen3-asr-flash"),
 		TTSModel:   envDefault("PUPBOX_DASHSCOPE_TTS_MODEL", "cosyvoice-v3-flash"),
 		TTSVoice:   envDefault("PUPBOX_DASHSCOPE_TTS_VOICE", "longhuhu_v3"),
@@ -61,6 +64,7 @@ func New(cfg Config) *Client {
 		apiKey:     strings.TrimSpace(cfg.APIKey),
 		baseURL:    strings.TrimRight(envDefaultValue(cfg.BaseURL, "https://dashscope.aliyuncs.com"), "/"),
 		http:       &http.Client{Timeout: 60 * time.Second},
+		chatModel:  envDefaultValue(cfg.ChatModel, "qwen-turbo"),
 		sttModel:   envDefaultValue(cfg.STTModel, "qwen3-asr-flash"),
 		ttsModel:   envDefaultValue(cfg.TTSModel, "cosyvoice-v3-flash"),
 		ttsVoice:   envDefaultValue(cfg.TTSVoice, "longhuhu_v3"),
@@ -77,6 +81,10 @@ func (c *Client) Available() bool {
 
 func (c *Client) Name() string {
 	return "dashscope"
+}
+
+func (c *Client) ChatModel() string {
+	return c.chatModel
 }
 
 func (c *Client) STTModel() string {
@@ -97,6 +105,62 @@ func (c *Client) TTSFormat() string {
 
 func (c *Client) TTSSpeed() float64 {
 	return c.ttsSpeed
+}
+
+func (c *Client) CreateResponse(ctx context.Context, instructions, input string) (string, error) {
+	if !c.Available() {
+		return "", errors.New("dashscope api key is not configured")
+	}
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", errors.New("empty chat input")
+	}
+
+	messages := []map[string]string{
+		{"role": "user", "content": input},
+	}
+	if strings.TrimSpace(instructions) != "" {
+		messages = append([]map[string]string{{"role": "system", "content": instructions}}, messages...)
+	}
+	payload := map[string]any{
+		"model":       c.chatModel,
+		"messages":    messages,
+		"temperature": 0.7,
+		"max_tokens":  180,
+	}
+
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return "", err
+	}
+
+	req, err := c.newJSONRequest(ctx, "/compatible-mode/v1/chat/completions", &body)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("dashscope chat api returned %s: %s", resp.Status, string(data))
+	}
+
+	var parsed chatCompletionResponse
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return "", err
+	}
+	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return "", errors.New("dashscope chat returned no content")
+	}
+	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
 }
 
 func (c *Client) Transcribe(ctx context.Context, audio []byte, filename, contentType string) (string, error) {

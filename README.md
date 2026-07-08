@@ -157,6 +157,7 @@ Defaults:
 ```bash
 export PUPBOX_VOICE_PROVIDER=dashscope
 export PUPBOX_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com
+export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
 export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
 export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
 export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
@@ -165,11 +166,19 @@ export PUPBOX_DASHSCOPE_TTS_SPEED=0.88
 export PUPBOX_DASHSCOPE_TTS_SAMPLE_RATE=24000
 ```
 
-`make dev-dashscope` defaults to `PUPBOX_CHAT_PROVIDER=mock` to avoid OpenAI quota errors and reduce latency. To use OpenAI for non-deterministic replies while keeping DashScope STT/TTS:
+`make dev-dashscope` defaults to `PUPBOX_CHAT_PROVIDER=dashscope`, so STT, TTS, and free-form fallback replies all use DashScope/Qwen. To use only deterministic activities and local mock fallback replies:
+
+```bash
+make dev-dashscope DASHSCOPE_CHAT_PROVIDER=mock
+```
+
+To use OpenAI for non-deterministic replies while keeping DashScope STT/TTS:
 
 ```bash
 make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai
 ```
+
+Pupbox still uses deterministic activity routing before Qwen. That means safety rules and known toddler workflows, such as `讲故事`, `数数`, `猜动物`, `插座`, `嗯嗯`, and `汪汪`, are handled by local code first. Qwen is only called when no local rule or activity matches.
 
 The default TTS combination is `cosyvoice-v3-flash + longhuhu_v3` because it was verified against the live DashScope API. `cosyvoice-v3.5-flash` is supported as a configurable model, but the currently tested `longhuhu_v3` and `longxiaochun` voices returned engine error `418` with that model, so it is not the default yet.
 

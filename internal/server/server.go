@@ -15,17 +15,23 @@ import (
 	"time"
 
 	"github.com/donychen1134/pupbox/internal/dog"
-	"github.com/donychen1134/pupbox/internal/openaiapi"
 )
 
 type Server struct {
 	mux       *http.ServeMux
-	ai        *openaiapi.Client
+	chat      ChatProvider
 	voice     VoiceProvider
-	useChatAI bool
+	useChat   bool
 	useVoice  bool
 	staticDir string
 	log       *slog.Logger
+}
+
+type ChatProvider interface {
+	Available() bool
+	Name() string
+	ChatModel() string
+	CreateResponse(ctx context.Context, instructions, input string) (string, error)
 }
 
 type VoiceProvider interface {
@@ -41,7 +47,7 @@ type VoiceProvider interface {
 }
 
 type Config struct {
-	AI        *openaiapi.Client
+	Chat      ChatProvider
 	Voice     VoiceProvider
 	StaticDir string
 	Logger    *slog.Logger
@@ -56,13 +62,15 @@ func New(cfg Config) *Server {
 	forceMock := strings.EqualFold(os.Getenv("PUPBOX_MODE"), "mock")
 	voice := cfg.Voice
 	if voice == nil {
-		voice = cfg.AI
+		if provider, ok := cfg.Chat.(VoiceProvider); ok {
+			voice = provider
+		}
 	}
 	s := &Server{
 		mux:       http.NewServeMux(),
-		ai:        cfg.AI,
+		chat:      cfg.Chat,
 		voice:     voice,
-		useChatAI: chatAIEnabled(cfg.AI, forceMock),
+		useChat:   chatEnabled(cfg.Chat, forceMock),
 		useVoice:  voice != nil && voice.Available() && !forceMock,
 		staticDir: cfg.StaticDir,
 		log:       logger,
@@ -270,13 +278,13 @@ func (s *Server) reply(ctx context.Context, text string) (string, dog.SafetyResu
 		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 	}
 
-	if s.useChatAI {
-		reply, err := s.ai.CreateResponse(ctx, dog.Instructions(), text)
+	if s.useChat {
+		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), text)
 		if err != nil {
 			fallback := dog.MockReply(text)
 			return fallback, safety, nil, "mock_fallback", err
 		}
-		return dog.ClampReply(reply, 90), safety, nil, "openai", nil
+		return dog.ClampReply(reply, 90), safety, nil, s.chat.Name(), nil
 	}
 
 	return dog.MockReply(text), safety, nil, "mock", nil
@@ -323,15 +331,15 @@ func (s *Server) mode() string {
 	if s.useVoice {
 		return s.voice.Name()
 	}
-	if s.useChatAI {
-		return "openai-chat"
+	if s.useChat {
+		return s.chat.Name() + "-chat"
 	}
 	return "mock"
 }
 
 func (s *Server) chatProvider() string {
-	if s.useChatAI {
-		return "openai"
+	if s.useChat {
+		return s.chat.Name()
 	}
 	return "mock"
 }
@@ -346,10 +354,10 @@ func (s *Server) voiceProvider() string {
 func (s *Server) modelName(kind string) string {
 	switch kind {
 	case "chat":
-		if s.ai == nil {
+		if s.chat == nil {
 			return ""
 		}
-		return s.ai.ChatModel()
+		return s.chat.ChatModel()
 	case "stt":
 		if s.voice == nil {
 			return ""
@@ -382,8 +390,8 @@ func (s *Server) ttsSpeed() float64 {
 	return s.voice.TTSSpeed()
 }
 
-func chatAIEnabled(ai *openaiapi.Client, forceMock bool) bool {
-	if ai == nil || !ai.Available() || forceMock {
+func chatEnabled(chat ChatProvider, forceMock bool) bool {
+	if chat == nil || !chat.Available() || forceMock {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("PUPBOX_CHAT_PROVIDER"))) {

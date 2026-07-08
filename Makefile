@@ -2,7 +2,7 @@ PUPBOX_ADDR ?= 127.0.0.1:8791
 PUPBOX_BASE_URL ?= http://$(PUPBOX_ADDR)
 CODEX_HOME ?= $(HOME)/.codex
 PWCLI ?= $(CODEX_HOME)/skills/playwright/scripts/playwright_cli.sh
-DASHSCOPE_CHAT_PROVIDER ?= mock
+DASHSCOPE_CHAT_PROVIDER ?= dashscope
 
 .PHONY: test-local test-openai-api test-ui dev-openai dev-dashscope dev-mock check-openai-key check-dashscope-key check-secrets
 

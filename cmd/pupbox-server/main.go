@@ -20,10 +20,11 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	addr := envDefault("PUPBOX_ADDR", "127.0.0.1:8787")
 	openAI := openaiapi.NewFromEnv()
+	dashscope := dashscopeapi.NewFromEnv()
 
 	srv := server.New(server.Config{
-		AI:        openAI,
-		Voice:     selectVoiceProvider(openAI),
+		Chat:      selectChatProvider(openAI, dashscope),
+		Voice:     selectVoiceProvider(openAI, dashscope),
 		StaticDir: "web/static",
 		Logger:    logger,
 	})
@@ -62,18 +63,34 @@ func envDefault(key, fallback string) string {
 	return fallback
 }
 
-func selectVoiceProvider(openAI *openaiapi.Client) server.VoiceProvider {
+func selectChatProvider(openAI *openaiapi.Client, dashscope *dashscopeapi.Client) server.ChatProvider {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("PUPBOX_CHAT_PROVIDER")))
+	switch provider {
+	case "mock", "local", "none", "off":
+		return nil
+	case "dashscope", "aliyun", "qwen":
+		return dashscope
+	case "openai":
+		return openAI
+	}
+
+	if dashscope.Available() {
+		return dashscope
+	}
+	return openAI
+}
+
+func selectVoiceProvider(openAI *openaiapi.Client, dashscope *dashscopeapi.Client) server.VoiceProvider {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("PUPBOX_VOICE_PROVIDER")))
 	switch provider {
 	case "mock", "none", "off":
 		return nil
 	case "dashscope", "aliyun", "qwen":
-		return dashscopeapi.NewFromEnv()
+		return dashscope
 	case "openai":
 		return openAI
 	}
 
-	dashscope := dashscopeapi.NewFromEnv()
 	if dashscope.Available() {
 		return dashscope
 	}

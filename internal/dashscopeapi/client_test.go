@@ -10,6 +10,9 @@ func TestConfigDefaults(t *testing.T) {
 	if got, want := client.Name(), "dashscope"; got != want {
 		t.Fatalf("Name() = %q, want %q", got, want)
 	}
+	if got, want := client.ChatModel(), "qwen-turbo"; got != want {
+		t.Fatalf("ChatModel() = %q, want %q", got, want)
+	}
 	if got, want := client.STTModel(), "qwen3-asr-flash"; got != want {
 		t.Fatalf("STTModel() = %q, want %q", got, want)
 	}

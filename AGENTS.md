@@ -73,6 +73,7 @@ Useful optional settings:
 
 ```bash
 export PUPBOX_VOICE_PROVIDER=dashscope
+export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
 export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
 export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
 export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
@@ -80,7 +81,7 @@ export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
 
 Do not send a default `PUPBOX_DASHSCOPE_TTS_PROMPT`. Live smoke tests showed `cosyvoice-v3-flash + longhuhu_v3` succeeds without `instruction`, while the same request can return CosyVoice engine errors when a default instruction is included.
 
-`make dev-dashscope` defaults to `PUPBOX_CHAT_PROVIDER=mock` through `DASHSCOPE_CHAT_PROVIDER=mock`. This avoids OpenAI quota failures in the default Alibaba voice workflow. Use `make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai` only when OpenAI API quota is available and richer fallback replies are needed.
+`make dev-dashscope` defaults to `PUPBOX_CHAT_PROVIDER=dashscope` through `DASHSCOPE_CHAT_PROVIDER=dashscope`, so STT, TTS, and free-form fallback replies all use DashScope/Qwen. Use `make dev-dashscope DASHSCOPE_CHAT_PROVIDER=mock` to disable model fallback, or `make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai` only when OpenAI API quota is available.
 
 Do not write real key values into docs, examples, logs, screenshots, or commits.
 
@@ -88,6 +89,7 @@ Do not write real key values into docs, examples, logs, screenshots, or commits.
 
 - Keep activity routing deterministic before falling back to free-form model responses.
 - Prefer adding reviewed content and activities over making the model more open-ended.
+- In DashScope mode, deterministic routing means safety checks and known activities run before Qwen; Qwen should only handle unmatched free-form child input.
 - Keep future hardware actions as stable symbolic names such as `tail_wag`, `glow_red`, or `slow_breathe`; do not let model output directly control motors or PWM.
 - In server voice mode, `POST /api/chat` may synthesize TTS unless `tts=off` is set.
 - API responses should keep the `timings` object for latency diagnosis.
