@@ -14,6 +14,7 @@ Use `AGENTS.md` for durable Codex guidance. Do not create `AGENT.md` unless a sp
 - Treat any pasted API key as compromised and ask the user to rotate it.
 - Before pushing to a remote, run a sensitive-information check such as `make check-secrets`. If a potential secret or private child/family artifact is found, stop and ask the user before pushing.
 - When exposing Pupbox beyond localhost, require `PUPBOX_ACCESS_TOKEN`; do not publish chat, speech, voice, or activity APIs without access-token protection.
+- For VPS deployment, do not upload files from the local workstation. Build release artifacts in GitHub Actions and install them on the VPS from GitHub Releases.
 - Keep routine tests on `tts=off` unless the task explicitly requires OpenAI TTS verification.
 - Do not add continuous background listening by default. Prefer press-and-hold or a physical button.
 - Child-facing replies must be short, gentle, and concrete.

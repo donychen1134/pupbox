@@ -118,7 +118,7 @@ The browser stores the token locally and removes it from the address bar after t
 https://pupbox.example.com/toy.html?clearToken=1
 ```
 
-See [docs/deploy-vps.md](docs/deploy-vps.md) for a systemd and Caddy deployment example.
+See [docs/deploy-vps.md](docs/deploy-vps.md) for the GitHub Release, systemd, and Caddy deployment path. The VPS does not need Go installed when using release packages.
 
 ## OpenAI Settings
 

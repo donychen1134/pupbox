@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build release packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build dist
+
+          for arch in amd64 arm64; do
+            package="pupbox-linux-${arch}"
+            package_dir="build/${package}"
+            rm -rf "${package_dir}"
+            mkdir -p "${package_dir}/web"
+
+            GOOS=linux GOARCH="${arch}" go build \
+              -trimpath \
+              -ldflags="-s -w" \
+              -o "${package_dir}/pupbox-server" \
+              ./cmd/pupbox-server
+
+            cp -R web/static "${package_dir}/web/static"
+            cp README.md "${package_dir}/README.md"
+            cp -R docs "${package_dir}/docs"
+
+            tar -C build -czf "dist/${package}.tar.gz" "${package}"
+          done
+
+          (cd dist && shasum -a 256 *.tar.gz > checksums.txt)
+
+      - name: Resolve release tag
+        id: release_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ inputs.tag }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/* --clobber
+          else
+            gh release create "${TAG}" dist/* --title "${TAG}" --generate-notes
+          fi
