@@ -94,6 +94,14 @@ Do not write real key values into docs, examples, logs, screenshots, or commits.
 - Browser microphone uploads should stay in 16 kHz mono WAV unless a provider-specific reason requires another format.
 - Use `toy.html` for child-facing flow verification and `index.html` for parent/debug verification.
 
+## Completion Notes
+
+At the end of each work turn, tell the user:
+
+- What was verified by the agent, preferring direct local validation when possible.
+- What the user should manually verify next, especially child-facing voice behavior that requires listening.
+- The next most useful project step toward the voice-only plush dog goal.
+
 ## Verification Before Commit
 
 At minimum run:
