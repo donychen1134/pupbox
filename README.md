@@ -93,6 +93,7 @@ export PUPBOX_STT_MODEL=whisper-1
 export PUPBOX_TTS_MODEL=gpt-4o-mini-tts
 export PUPBOX_TTS_VOICE=marin
 export PUPBOX_TTS_FORMAT=mp3
+export PUPBOX_TTS_SPEED=0.88
 ```
 
 Optional TTS style prompt:
@@ -100,6 +101,38 @@ Optional TTS style prompt:
 ```bash
 export PUPBOX_TTS_PROMPT='你是一个藏在毛绒小狗玩具里的中文声音。声音要温暖、圆润、亲近、像在和三岁小女孩玩；语速偏慢，吐字清楚，句子之间有短停顿。不要播音腔，不要机械，不要严肃。'
 ```
+
+### Voice Tuning
+
+First confirm that the toy page is not using browser fallback speech:
+
+```bash
+curl -sS http://127.0.0.1:8791/api/health
+```
+
+The response should include:
+
+```json
+{
+  "mode": "openai",
+  "tts_model": "gpt-4o-mini-tts",
+  "tts_voice": "marin",
+  "tts_speed": 0.88
+}
+```
+
+If `mode` is `mock`, or if the response contains a `tts_error`, the browser may fall back to local speech synthesis, which usually sounds worse.
+
+Useful tuning options:
+
+```bash
+export PUPBOX_TTS_VOICE=cedar
+export PUPBOX_TTS_SPEED=0.82
+export PUPBOX_TTS_PROMPT='你是一个藏在毛绒小狗玩具里的中文小狗声音。语气温柔、开心、像贴近耳边说话；语速慢一点，句子短一点，停顿自然。不要播音腔，不要夸张表演。'
+make dev-openai
+```
+
+Try `marin` first, then `cedar`, then compare other voices if needed. For a plush toy, the first goal is not maximum realism; it is whether the child finds the voice friendly, clear, and not startling.
 
 Never commit `.env`, API keys, recordings, transcripts, or private family data.
 
@@ -129,9 +162,22 @@ make test-openai-api  # local API smoke tests with tts=off
 make test-ui          # opens toy.html and checks browser console
 make dev-openai       # starts fixed-port OpenAI mode, requires OPENAI_API_KEY
 make dev-mock         # starts fixed-port mock mode
+make check-secrets    # scans for obvious committed secrets before pushing
 ```
 
 Routine smoke tests use `tts=off` so they do not spend TTS quota.
+
+## Parent Validation Checklist
+
+Use `http://127.0.0.1:8791/toy.html` for child-facing validation.
+
+1. Confirm the page says `OpenAI` and shows the expected voice and speed.
+2. Tap once to wake the dog and check whether the wake voice sounds like OpenAI TTS, not browser speech.
+3. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should still respond with a simple playful activity.
+4. Say `豆豆讲故事`. The reply should be short enough to finish before the child loses attention.
+5. Say `我想玩插座`. The dog should route to a caregiver safety reply.
+6. Check whether the child understands the reply without looking at the screen.
+7. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
 
 ## Safety Rules
 

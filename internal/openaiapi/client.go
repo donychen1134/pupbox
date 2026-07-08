@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,6 +27,7 @@ type Client struct {
 	ttsVoice  string
 	ttsFormat string
 	ttsPrompt string
+	ttsSpeed  float64
 }
 
 type Config struct {
@@ -37,6 +39,7 @@ type Config struct {
 	TTSVoice  string
 	TTSFormat string
 	TTSPrompt string
+	TTSSpeed  string
 }
 
 func NewFromEnv() *Client {
@@ -49,6 +52,7 @@ func NewFromEnv() *Client {
 		TTSVoice:  envDefault("PUPBOX_TTS_VOICE", "marin"),
 		TTSFormat: envDefault("PUPBOX_TTS_FORMAT", "mp3"),
 		TTSPrompt: envDefault("PUPBOX_TTS_PROMPT", defaultTTSPrompt),
+		TTSSpeed:  envDefault("PUPBOX_TTS_SPEED", defaultTTSSpeedString),
 	})
 }
 
@@ -63,6 +67,7 @@ func New(cfg Config) *Client {
 		ttsVoice:  envDefaultValue(cfg.TTSVoice, "marin"),
 		ttsFormat: envDefaultValue(cfg.TTSFormat, "mp3"),
 		ttsPrompt: envDefaultValue(cfg.TTSPrompt, defaultTTSPrompt),
+		ttsSpeed:  parseSpeechSpeed(envDefaultValue(cfg.TTSSpeed, defaultTTSSpeedString)),
 	}
 }
 
@@ -88,6 +93,10 @@ func (c *Client) TTSVoice() string {
 
 func (c *Client) TTSFormat() string {
 	return c.ttsFormat
+}
+
+func (c *Client) TTSSpeed() float64 {
+	return c.ttsSpeed
 }
 
 func (c *Client) CreateResponse(ctx context.Context, instructions, input string) (string, error) {
@@ -215,6 +224,7 @@ func (c *Client) Speak(ctx context.Context, text string) ([]byte, string, error)
 		"input":           text,
 		"response_format": c.ttsFormat,
 		"instructions":    c.ttsPrompt,
+		"speed":           c.ttsSpeed,
 	}
 
 	var body bytes.Buffer
@@ -244,7 +254,11 @@ func (c *Client) Speak(ctx context.Context, text string) ([]byte, string, error)
 	return data, audioMIME(c.ttsFormat), nil
 }
 
-const defaultTTSPrompt = "你是一个藏在毛绒小狗玩具里的中文声音。声音要温暖、圆润、亲近、像在和三岁小女孩玩；语速偏慢，吐字清楚，句子之间有短停顿。不要播音腔，不要机械，不要严肃。"
+const (
+	defaultTTSSpeed       = 0.88
+	defaultTTSSpeedString = "0.88"
+	defaultTTSPrompt      = "你是一个藏在毛绒小狗玩具里的中文声音。声音要温暖、圆润、亲近、像在和三岁小女孩玩；语速偏慢，吐字清楚，句子之间有短停顿。不要播音腔，不要机械，不要严肃。"
+)
 
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
@@ -308,6 +322,14 @@ func envDefaultValue(value, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+func parseSpeechSpeed(value string) float64 {
+	speed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || speed < 0.25 || speed > 4.0 {
+		return defaultTTSSpeed
+	}
+	return speed
 }
 
 func audioMIME(format string) string {

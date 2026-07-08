@@ -72,6 +72,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tts_model":   s.modelName("tts"),
 		"tts_voice":   s.modelName("voice"),
 		"tts_format":  s.modelName("format"),
+		"tts_speed":   s.ttsSpeed(),
 		"server_time": time.Now().Format(time.RFC3339),
 	})
 }
@@ -283,6 +284,13 @@ func (s *Server) modelName(kind string) string {
 	default:
 		return ""
 	}
+}
+
+func (s *Server) ttsSpeed() float64 {
+	if s.ai == nil {
+		return 0
+	}
+	return s.ai.TTSSpeed()
 }
 
 type chatRequest struct {

@@ -53,7 +53,8 @@ async function loadHealth() {
     state.health = health;
     els.modePill.textContent = health.mode === "openai" ? "OpenAI" : "Mock";
     if (health.mode === "openai") {
-      els.voiceNote.textContent = `OpenAI 语音：${health.tts_voice || "voice"}`;
+      const speed = Number(health.tts_speed || 1).toFixed(2);
+      els.voiceNote.textContent = `OpenAI 语音：${health.tts_voice || "voice"} / ${speed}x`;
     } else if (browserSpeechRecognition()) {
       els.voiceNote.textContent = "按住说话，松开发送";
     } else {

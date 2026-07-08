@@ -3,7 +3,7 @@ PUPBOX_BASE_URL ?= http://$(PUPBOX_ADDR)
 CODEX_HOME ?= $(HOME)/.codex
 PWCLI ?= $(CODEX_HOME)/skills/playwright/scripts/playwright_cli.sh
 
-.PHONY: test-local test-openai-api test-ui dev-openai dev-mock check-openai-key
+.PHONY: test-local test-openai-api test-ui dev-openai dev-mock check-openai-key check-secrets
 
 test-local:
 	go test ./...
@@ -29,3 +29,6 @@ dev-mock:
 
 check-openai-key:
 	@test -n "$$OPENAI_API_KEY" || (echo "OPENAI_API_KEY is not set"; exit 1)
+
+check-secrets:
+	@! rg -n --hidden --glob '!.git/**' --glob '!*.sum' --glob '!*.lock' '(sk-(proj|live|test)-[A-Za-z0-9_-]{20,}|SSO[_A-Z]*TOKEN|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY)' .

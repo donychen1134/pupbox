@@ -103,7 +103,8 @@ async function loadHealth() {
     els.modeText.textContent = health.mode;
     els.sourceText.textContent = "-";
     if (health.mode === "openai") {
-      els.voiceNote.textContent = "语音：OpenAI STT + TTS";
+      const speed = Number(health.tts_speed || 1).toFixed(2);
+      els.voiceNote.textContent = `语音：OpenAI STT + TTS / ${health.tts_voice || "voice"} / ${speed}x`;
     } else if (browserSTT) {
       els.voiceNote.textContent = "语音：浏览器听写 + 本地 mock 回复";
     } else {

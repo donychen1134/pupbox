@@ -12,6 +12,7 @@ Use `AGENTS.md` for durable Codex guidance. Do not create `AGENT.md` unless a sp
 
 - Never commit API keys, SSO tokens, `.env` files, recordings, transcripts, or private child/family data.
 - Treat any pasted API key as compromised and ask the user to rotate it.
+- Before pushing to a remote, run a sensitive-information check such as `make check-secrets`. If a potential secret or private child/family artifact is found, stop and ask the user before pushing.
 - Keep routine tests on `tts=off` unless the task explicitly requires OpenAI TTS verification.
 - Do not add continuous background listening by default. Prefer press-and-hold or a physical button.
 - Child-facing replies must be short, gentle, and concrete.
@@ -59,6 +60,7 @@ export PUPBOX_STT_MODEL=whisper-1
 export PUPBOX_TTS_MODEL=gpt-4o-mini-tts
 export PUPBOX_TTS_VOICE=marin
 export PUPBOX_TTS_FORMAT=mp3
+export PUPBOX_TTS_SPEED=0.88
 ```
 
 Do not write real key values into docs, examples, logs, screenshots, or commits.
@@ -84,4 +86,5 @@ When the server is already running on the configured port, also run:
 ```bash
 make test-openai-api
 make test-ui
+make check-secrets
 ```
