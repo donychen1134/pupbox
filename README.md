@@ -14,6 +14,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Deterministic activity engine for toddler-friendly interactions.
 - Safety rules that intercept dangerous or private topics before model calls.
 - Hardware action names in activity responses, ready to map to tail/LED/motion control.
+- Optional access-token protection for exposing the prototype over HTTPS.
 
 ## Interaction Model
 
@@ -85,6 +86,39 @@ Override the port:
 ```bash
 make dev-openai PUPBOX_ADDR=127.0.0.1:8792
 ```
+
+## Phone Browser Prototype
+
+The recommended remote prototype path is:
+
+```text
+iPhone Safari
+  -> HTTPS
+  -> VPS running pupbox-server
+  -> DashScope STT / Qwen / TTS
+```
+
+This avoids relying on a Mac that stays in the office and avoids building an iOS app before the voice-only toy interaction is proven.
+
+When exposing Pupbox outside localhost, set an access token:
+
+```bash
+export PUPBOX_ACCESS_TOKEN=<long-random-token>
+```
+
+Open the child-facing page from the phone:
+
+```text
+https://pupbox.example.com/toy.html?token=<long-random-token>
+```
+
+The browser stores the token locally and removes it from the address bar after the first load. To clear the saved token:
+
+```text
+https://pupbox.example.com/toy.html?clearToken=1
+```
+
+See [docs/deploy-vps.md](docs/deploy-vps.md) for a systemd and Caddy deployment example.
 
 ## OpenAI Settings
 
@@ -204,10 +238,20 @@ POST /api/speech {"text":"汪，豆豆醒啦"}
 POST /api/voice  multipart/form-data audio=<recording>
 ```
 
+If `PUPBOX_ACCESS_TOKEN` is set, API requests must include one of:
+
+```text
+Authorization: Bearer <token>
+X-Pupbox-Access-Token: <token>
+?token=<token>
+```
+
 `POST /api/chat` synthesizes TTS in OpenAI mode unless `tts=off` is set:
 
 ```bash
-curl -sS -H 'Content-Type: application/json' \
+curl -sS \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <token>' \
   -d '{"text":"嗯嗯"}' \
   'http://127.0.0.1:8791/api/chat?tts=off'
 ```

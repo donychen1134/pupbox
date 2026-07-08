@@ -8,6 +8,7 @@ const state = {
   awake: false,
   spaceDown: false,
   thinkingSound: null,
+  accessToken: "",
 };
 
 const els = {
@@ -21,6 +22,7 @@ const els = {
 init();
 
 async function init() {
+  state.accessToken = loadAccessToken();
   bindEvents();
   await loadHealth();
 }
@@ -61,8 +63,14 @@ async function loadHealth() {
       els.voiceNote.textContent = "当前浏览器不支持听写";
     }
   } catch (error) {
-    els.modePill.textContent = "离线";
-    els.voiceNote.textContent = "服务未连接";
+    if (error.status === 401) {
+      els.modePill.textContent = "授权";
+      els.toyState.textContent = "找爸爸妈妈";
+      els.voiceNote.textContent = "需要家长授权";
+    } else {
+      els.modePill.textContent = "离线";
+      els.voiceNote.textContent = "服务未连接";
+    }
   }
 }
 
@@ -186,7 +194,7 @@ async function sendRecognizedText(text) {
     await handleDogResponse(response);
   } catch (error) {
     setPhase("idle", "出错了", "按住");
-    await speak("豆豆这里出了一点小问题。");
+    await speak(error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。");
   }
 }
 
@@ -202,13 +210,13 @@ async function sendRecording(blob, mimeType, filename, durationMs) {
 
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
-    const response = await fetch("/api/voice", { method: "POST", body: form });
-    if (!response.ok) throw new Error(await response.text());
+    const response = await fetch("/api/voice", { method: "POST", headers: authHeaders(), body: form });
+    if (!response.ok) throw await responseError(response);
     const payload = await response.json();
     await handleDogResponse(payload);
   } catch (error) {
     setPhase("idle", "出错了", "按住");
-    await speak("豆豆这里出了一点小问题。");
+    await speak(error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。");
   }
 }
 
@@ -362,19 +370,81 @@ function writeString(view, offset, value) {
 }
 
 async function fetchJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(await response.text());
+  const response = await fetch(url, { headers: authHeaders() });
+  if (!response.ok) throw await responseError(response);
   return response.json();
 }
 
 async function postJSON(url, payload) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await responseError(response);
   return response.json();
+}
+
+async function responseError(response) {
+  const body = await response.text();
+  let message = body || `HTTP ${response.status}`;
+  try {
+    message = JSON.parse(body).error || message;
+  } catch (error) {
+    // Keep the raw response body.
+  }
+  const error = new Error(message);
+  error.status = response.status;
+  return error;
+}
+
+function loadAccessToken() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("clearToken") === "1") {
+    removeStoredAccessToken();
+    url.searchParams.delete("clearToken");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    return "";
+  }
+
+  const token = (url.searchParams.get("token") || "").trim();
+  if (token) {
+    storeAccessToken(token);
+    url.searchParams.delete("token");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    return token;
+  }
+  return storedAccessToken();
+}
+
+function authHeaders(headers = {}) {
+  const result = { ...headers };
+  if (state.accessToken) result.Authorization = `Bearer ${state.accessToken}`;
+  return result;
+}
+
+function storedAccessToken() {
+  try {
+    return window.localStorage.getItem("pupbox.accessToken") || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function storeAccessToken(token) {
+  try {
+    window.localStorage.setItem("pupbox.accessToken", token);
+  } catch (error) {
+    // Query-token fallback still works for this page load.
+  }
+}
+
+function removeStoredAccessToken() {
+  try {
+    window.localStorage.removeItem("pupbox.accessToken");
+  } catch (error) {
+    // Ignore storage failures.
+  }
 }
 
 function speak(text) {

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -18,13 +20,14 @@ import (
 )
 
 type Server struct {
-	mux       *http.ServeMux
-	chat      ChatProvider
-	voice     VoiceProvider
-	useChat   bool
-	useVoice  bool
-	staticDir string
-	log       *slog.Logger
+	mux         *http.ServeMux
+	chat        ChatProvider
+	voice       VoiceProvider
+	useChat     bool
+	useVoice    bool
+	staticDir   string
+	accessToken string
+	log         *slog.Logger
 }
 
 type ChatProvider interface {
@@ -47,10 +50,11 @@ type VoiceProvider interface {
 }
 
 type Config struct {
-	Chat      ChatProvider
-	Voice     VoiceProvider
-	StaticDir string
-	Logger    *slog.Logger
+	Chat        ChatProvider
+	Voice       VoiceProvider
+	StaticDir   string
+	AccessToken string
+	Logger      *slog.Logger
 }
 
 func New(cfg Config) *Server {
@@ -67,13 +71,14 @@ func New(cfg Config) *Server {
 		}
 	}
 	s := &Server{
-		mux:       http.NewServeMux(),
-		chat:      cfg.Chat,
-		voice:     voice,
-		useChat:   chatEnabled(cfg.Chat, forceMock),
-		useVoice:  voice != nil && voice.Available() && !forceMock,
-		staticDir: cfg.StaticDir,
-		log:       logger,
+		mux:         http.NewServeMux(),
+		chat:        cfg.Chat,
+		voice:       voice,
+		useChat:     chatEnabled(cfg.Chat, forceMock),
+		useVoice:    voice != nil && voice.Available() && !forceMock,
+		staticDir:   cfg.StaticDir,
+		accessToken: strings.TrimSpace(cfg.AccessToken),
+		log:         logger,
 	}
 	s.routes()
 	return s
@@ -84,17 +89,50 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /api/health", s.handleHealth)
-	s.mux.HandleFunc("GET /api/activities", s.handleActivities)
-	s.mux.HandleFunc("POST /api/chat", s.handleChat)
-	s.mux.HandleFunc("POST /api/speech", s.handleSpeech)
-	s.mux.HandleFunc("POST /api/voice", s.handleVoice)
+	s.mux.HandleFunc("GET /api/health", s.requireAccess(s.handleHealth))
+	s.mux.HandleFunc("GET /api/activities", s.requireAccess(s.handleActivities))
+	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
+	s.mux.HandleFunc("POST /api/speech", s.requireAccess(s.handleSpeech))
+	s.mux.HandleFunc("POST /api/voice", s.requireAccess(s.handleVoice))
 	s.mux.HandleFunc("/", s.handleStatic)
+}
+
+func (s *Server) requireAccess(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.accessToken == "" || s.validAccessToken(r) {
+			next(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="pupbox"`)
+		writeError(w, http.StatusUnauthorized, "access token required")
+	}
+}
+
+func (s *Server) validAccessToken(r *http.Request) bool {
+	token := requestAccessToken(r)
+	if token == "" {
+		return false
+	}
+	want := sha256.Sum256([]byte(s.accessToken))
+	got := sha256.Sum256([]byte(token))
+	return subtle.ConstantTimeCompare(got[:], want[:]) == 1
+}
+
+func requestAccessToken(r *http.Request) string {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if scheme, value, ok := strings.Cut(auth, " "); ok && strings.EqualFold(scheme, "Bearer") {
+		return strings.TrimSpace(value)
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-Pupbox-Access-Token")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
+		"auth_required":  s.accessToken != "",
 		"mode":           s.mode(),
 		"dog":            dog.Name,
 		"chat_provider":  s.chatProvider(),
