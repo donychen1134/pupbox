@@ -1,7 +1,6 @@
 const state = {
   recorder: null,
   recognition: null,
-  chunks: [],
   recording: false,
   speechText: "",
   speechSent: false,
@@ -51,10 +50,10 @@ async function loadHealth() {
   try {
     const health = await fetchJSON("/api/health");
     state.health = health;
-    els.modePill.textContent = health.mode === "openai" ? "OpenAI" : "Mock";
-    if (health.mode === "openai") {
+    els.modePill.textContent = providerLabel(health.mode);
+    if (hasServerVoice()) {
       const speed = Number(health.tts_speed || 1).toFixed(2);
-      els.voiceNote.textContent = `OpenAI 语音：${health.tts_voice || "voice"} / ${speed}x`;
+      els.voiceNote.textContent = `${providerLabel(remoteVoiceProvider())} 语音：${health.tts_voice || "voice"} / ${speed}x`;
     } else if (browserSpeechRecognition()) {
       els.voiceNote.textContent = "按住说话，松开发送";
     } else {
@@ -82,7 +81,7 @@ async function startPress(event) {
     return;
   }
 
-  if (state.health?.mode !== "openai") {
+  if (!hasServerVoice()) {
     setPhase("idle", "还没连上语音", "按住");
     await speak("豆豆还没连上语音。请让爸爸妈妈看一下设置。");
     return;
@@ -96,21 +95,10 @@ async function startPress(event) {
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = pickAudioMimeType();
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    state.chunks = [];
+    const recorder = await createWavRecorder(stream);
     state.recorder = recorder;
     state.recording = true;
     setPhase("listening", "豆豆听着呢", "松开");
-
-    recorder.addEventListener("dataavailable", (recordEvent) => {
-      if (recordEvent.data.size > 0) state.chunks.push(recordEvent.data);
-    });
-    recorder.addEventListener("stop", () => {
-      stream.getTracks().forEach((track) => track.stop());
-      sendRecording(mimeType || recorder.mimeType || "audio/webm");
-    });
-    recorder.start();
   } catch (error) {
     setPhase("idle", "没有听清", "按住");
     await speak("豆豆没有听清。再试一次吧。");
@@ -125,8 +113,15 @@ function stopPress() {
   }
 
   if (!state.recording || !state.recorder) return;
+  const recorder = state.recorder;
+  state.recorder = null;
   state.recording = false;
-  if (state.recorder.state !== "inactive") state.recorder.stop();
+  recorder.stop().then((recording) => {
+    sendRecording(recording.blob, recording.mimeType, recording.filename);
+  }).catch(async () => {
+    setPhase("idle", "没有听清", "按住");
+    await speak("豆豆没有听清。再试一次吧。");
+  });
 }
 
 function startBrowserSpeech(event) {
@@ -194,12 +189,10 @@ async function sendRecognizedText(text) {
   }
 }
 
-async function sendRecording(mimeType) {
-  if (!state.chunks.length) return;
-  const blob = new Blob(state.chunks, { type: mimeType });
+async function sendRecording(blob, mimeType, filename) {
+  if (!blob || blob.size === 0) return;
   const form = new FormData();
-  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  form.append("audio", blob, `recording.${ext}`);
+  form.append("audio", blob, filename || "recording.wav");
 
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
@@ -249,16 +242,94 @@ function setPhase(phase, stateText, label) {
 }
 
 function shouldUseBrowserSpeech() {
-  return state.health?.mode !== "openai" && Boolean(browserSpeechRecognition());
+  return !hasServerVoice() && Boolean(browserSpeechRecognition());
 }
 
 function browserSpeechRecognition() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
-function pickAudioMimeType() {
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+async function createWavRecorder(stream) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) throw new Error("AudioContext is not supported");
+
+  const context = new AudioContext();
+  await context.resume();
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+  const gain = context.createGain();
+  const chunks = [];
+
+  gain.gain.value = 0;
+  processor.onaudioprocess = (event) => {
+    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  };
+  source.connect(processor);
+  processor.connect(gain);
+  gain.connect(context.destination);
+
+  return {
+    async stop() {
+      processor.disconnect();
+      source.disconnect();
+      gain.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      const sampleRate = context.sampleRate;
+      await context.close();
+      return {
+        blob: encodeWav(chunks, sampleRate),
+        mimeType: "audio/wav",
+        filename: "recording.wav",
+      };
+    },
+  };
+}
+
+function encodeWav(chunks, sampleRate) {
+  const samples = mergeFloat32(chunks);
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  floatTo16BitPCM(view, 44, samples);
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function mergeFloat32(chunks) {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
+function floatTo16BitPCM(view, offset, input) {
+  for (let i = 0; i < input.length; i += 1, offset += 2) {
+    const sample = Math.max(-1, Math.min(1, input[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+}
+
+function writeString(view, offset, value) {
+  for (let i = 0; i < value.length; i += 1) {
+    view.setUint8(offset + i, value.charCodeAt(i));
+  }
 }
 
 async function fetchJSON(url) {
@@ -278,13 +349,13 @@ async function postJSON(url, payload) {
 }
 
 function speak(text) {
-  if (state.health?.mode === "openai") {
-    return speakWithOpenAI(text);
+  if (hasServerVoice()) {
+    return speakWithServerVoice(text);
   }
   return speakInBrowser(text);
 }
 
-async function speakWithOpenAI(text) {
+async function speakWithServerVoice(text) {
   try {
     const payload = await postJSON("/api/speech", { text });
     if (payload.audio_base64 && payload.audio_mime) {
@@ -295,6 +366,27 @@ async function speakWithOpenAI(text) {
     // Fall back to browser speech below.
   }
   await speakInBrowser(text);
+}
+
+function hasServerVoice() {
+  return remoteVoiceProvider() !== "mock";
+}
+
+function remoteVoiceProvider() {
+  return state.health?.voice_provider || (state.health?.mode === "openai" ? "openai" : "mock");
+}
+
+function providerLabel(provider) {
+  switch (provider) {
+    case "dashscope":
+      return "阿里云";
+    case "openai":
+      return "OpenAI";
+    case "openai-chat":
+      return "OpenAI Chat";
+    default:
+      return "Mock";
+  }
 }
 
 function speakInBrowser(text) {

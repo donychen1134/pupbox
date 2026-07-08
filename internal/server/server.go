@@ -20,13 +20,28 @@ import (
 type Server struct {
 	mux       *http.ServeMux
 	ai        *openaiapi.Client
-	useOpenAI bool
+	voice     VoiceProvider
+	useChatAI bool
+	useVoice  bool
 	staticDir string
 	log       *slog.Logger
 }
 
+type VoiceProvider interface {
+	Available() bool
+	Name() string
+	STTModel() string
+	TTSModel() string
+	TTSVoice() string
+	TTSFormat() string
+	TTSSpeed() float64
+	Transcribe(ctx context.Context, audio []byte, filename, contentType string) (string, error)
+	Speak(ctx context.Context, text string) ([]byte, string, error)
+}
+
 type Config struct {
 	AI        *openaiapi.Client
+	Voice     VoiceProvider
 	StaticDir string
 	Logger    *slog.Logger
 }
@@ -38,10 +53,16 @@ func New(cfg Config) *Server {
 	}
 
 	forceMock := strings.EqualFold(os.Getenv("PUPBOX_MODE"), "mock")
+	voice := cfg.Voice
+	if voice == nil {
+		voice = cfg.AI
+	}
 	s := &Server{
 		mux:       http.NewServeMux(),
 		ai:        cfg.AI,
-		useOpenAI: cfg.AI != nil && cfg.AI.Available() && !forceMock,
+		voice:     voice,
+		useChatAI: cfg.AI != nil && cfg.AI.Available() && !forceMock,
+		useVoice:  voice != nil && voice.Available() && !forceMock,
 		staticDir: cfg.StaticDir,
 		log:       logger,
 	}
@@ -64,16 +85,18 @@ func (s *Server) routes() {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"mode":        s.mode(),
-		"dog":         dog.Name,
-		"chat_model":  s.modelName("chat"),
-		"stt_model":   s.modelName("stt"),
-		"tts_model":   s.modelName("tts"),
-		"tts_voice":   s.modelName("voice"),
-		"tts_format":  s.modelName("format"),
-		"tts_speed":   s.ttsSpeed(),
-		"server_time": time.Now().Format(time.RFC3339),
+		"ok":             true,
+		"mode":           s.mode(),
+		"dog":            dog.Name,
+		"chat_provider":  s.chatProvider(),
+		"voice_provider": s.voiceProvider(),
+		"chat_model":     s.modelName("chat"),
+		"stt_model":      s.modelName("stt"),
+		"tts_model":      s.modelName("tts"),
+		"tts_voice":      s.modelName("voice"),
+		"tts_format":     s.modelName("format"),
+		"tts_speed":      s.ttsSpeed(),
+		"server_time":    time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -124,15 +147,15 @@ func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "text is required")
 		return
 	}
-	if !s.useOpenAI {
+	if !s.useVoice {
 		writeJSON(w, http.StatusOK, speechResponse{
 			Mode:     s.mode(),
-			TTSError: "openai mode is not enabled",
+			TTSError: "server voice mode is not enabled",
 		})
 		return
 	}
 
-	audio, mime, err := s.ai.Speak(r.Context(), dog.ClampReply(text, 90))
+	audio, mime, err := s.voice.Speak(r.Context(), dog.ClampReply(text, 90))
 	writeJSON(w, http.StatusOK, speechResponse{
 		AudioBase64: encodeAudio(audio),
 		AudioMIME:   mime,
@@ -170,8 +193,8 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 
 	transcript := "我想听一个小狗故事"
 	var sttErr error
-	if s.useOpenAI {
-		transcript, sttErr = s.ai.Transcribe(r.Context(), data, filename, contentType)
+	if s.useVoice {
+		transcript, sttErr = s.voice.Transcribe(r.Context(), data, filename, contentType)
 		if sttErr != nil {
 			writeJSON(w, http.StatusOK, chatResponse{
 				Transcript: "",
@@ -210,7 +233,7 @@ func (s *Server) reply(ctx context.Context, text string) (string, dog.SafetyResu
 		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 	}
 
-	if s.useOpenAI {
+	if s.useChatAI {
 		reply, err := s.ai.CreateResponse(ctx, dog.Instructions(), text)
 		if err != nil {
 			fallback := dog.MockReply(text)
@@ -223,10 +246,10 @@ func (s *Server) reply(ctx context.Context, text string) (string, dog.SafetyResu
 }
 
 func (s *Server) speak(r *http.Request, text string) ([]byte, string, error) {
-	if !s.useOpenAI || strings.EqualFold(r.URL.Query().Get("tts"), "off") {
+	if !s.useVoice || strings.EqualFold(r.URL.Query().Get("tts"), "off") {
 		return nil, "", nil
 	}
-	audio, mime, err := s.ai.Speak(r.Context(), text)
+	audio, mime, err := s.voice.Speak(r.Context(), text)
 	if err != nil {
 		return nil, "", err
 	}
@@ -260,37 +283,66 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mode() string {
-	if s.useOpenAI {
+	if s.useVoice {
+		return s.voice.Name()
+	}
+	if s.useChatAI {
+		return "openai-chat"
+	}
+	return "mock"
+}
+
+func (s *Server) chatProvider() string {
+	if s.useChatAI {
 		return "openai"
 	}
 	return "mock"
 }
 
-func (s *Server) modelName(kind string) string {
-	if s.ai == nil {
-		return ""
+func (s *Server) voiceProvider() string {
+	if s.useVoice {
+		return s.voice.Name()
 	}
+	return "mock"
+}
+
+func (s *Server) modelName(kind string) string {
 	switch kind {
 	case "chat":
+		if s.ai == nil {
+			return ""
+		}
 		return s.ai.ChatModel()
 	case "stt":
-		return s.ai.STTModel()
+		if s.voice == nil {
+			return ""
+		}
+		return s.voice.STTModel()
 	case "tts":
-		return s.ai.TTSModel()
+		if s.voice == nil {
+			return ""
+		}
+		return s.voice.TTSModel()
 	case "voice":
-		return s.ai.TTSVoice()
+		if s.voice == nil {
+			return ""
+		}
+		return s.voice.TTSVoice()
 	case "format":
-		return s.ai.TTSFormat()
+		if s.voice == nil {
+			return ""
+		}
+		return s.voice.TTSFormat()
 	default:
 		return ""
 	}
 }
 
 func (s *Server) ttsSpeed() float64 {
-	if s.ai == nil {
+	if s.voice == nil {
 		return 0
 	}
-	return s.ai.TTSSpeed()
+	return s.voice.TTSSpeed()
 }
 
 type chatRequest struct {

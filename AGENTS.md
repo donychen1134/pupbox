@@ -24,6 +24,7 @@ Use `AGENTS.md` for durable Codex guidance. Do not create `AGENT.md` unless a sp
 
 - `cmd/pupbox-server`: Go HTTP server entrypoint.
 - `internal/dog`: child-safe persona, activity routing, safety rules, and future hardware action names.
+- `internal/dashscopeapi`: direct DashScope client for Qwen-ASR and CosyVoice.
 - `internal/openaiapi`: direct OpenAI HTTP client for Responses, STT, and TTS.
 - `internal/server`: HTTP API and static file serving.
 - `web/static/index.html`: parent/debug UI with transcript and activity buttons.
@@ -38,6 +39,7 @@ make test-local
 make test-openai-api
 make test-ui
 make dev-openai
+make dev-dashscope
 make dev-mock
 ```
 
@@ -63,6 +65,21 @@ export PUPBOX_TTS_FORMAT=mp3
 export PUPBOX_TTS_SPEED=0.88
 ```
 
+## DashScope Configuration
+
+DashScope voice mode reads `CHAT_ARCHIVE_QWEN_API_KEY` first and falls back to `DASHSCOPE_API_KEY`.
+
+Useful optional settings:
+
+```bash
+export PUPBOX_VOICE_PROVIDER=dashscope
+export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
+export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
+export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
+```
+
+Do not send a default `PUPBOX_DASHSCOPE_TTS_PROMPT`. Live smoke tests showed `cosyvoice-v3-flash + longhuhu_v3` succeeds without `instruction`, while the same request can return CosyVoice engine errors when a default instruction is included.
+
 Do not write real key values into docs, examples, logs, screenshots, or commits.
 
 ## Development Notes
@@ -70,7 +87,7 @@ Do not write real key values into docs, examples, logs, screenshots, or commits.
 - Keep activity routing deterministic before falling back to free-form model responses.
 - Prefer adding reviewed content and activities over making the model more open-ended.
 - Keep future hardware actions as stable symbolic names such as `tail_wag`, `glow_red`, or `slow_breathe`; do not let model output directly control motors or PWM.
-- In OpenAI mode, `POST /api/chat` may synthesize TTS unless `tts=off` is set.
+- In server voice mode, `POST /api/chat` may synthesize TTS unless `tts=off` is set.
 - Use `toy.html` for child-facing flow verification and `index.html` for parent/debug verification.
 
 ## Verification Before Commit

@@ -9,7 +9,8 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Child-facing `toy.html` mode that simulates a single-button plush toy.
 - Mock mode that runs without an OpenAI API key.
 - Chrome Web Speech fallback in mock mode for low-cost local voice testing.
-- OpenAI mode for STT, model response, and TTS.
+- OpenAI mode for model response and optional STT/TTS.
+- Alibaba Cloud DashScope mode for lower-cost Chinese STT/TTS.
 - Deterministic activity engine for toddler-friendly interactions.
 - Safety rules that intercept dangerous or private topics before model calls.
 - Hardware action names in activity responses, ready to map to tail/LED/motion control.
@@ -30,6 +31,7 @@ The model should not depend on the child giving complete answers. Inputs like `�
 ```text
 cmd/pupbox-server/       Go server entrypoint
 internal/dog/            persona, safety rules, activities, hardware action names
+internal/dashscopeapi/   direct DashScope HTTP client for Qwen-ASR and CosyVoice
 internal/openaiapi/      direct OpenAI HTTP client
 internal/server/         HTTP API and static file serving
 web/static/index.html    parent/debug UI
@@ -51,6 +53,13 @@ OpenAI mode:
 ```bash
 export OPENAI_API_KEY=...
 make dev-openai
+```
+
+Alibaba Cloud DashScope voice mode:
+
+```bash
+export CHAT_ARCHIVE_QWEN_API_KEY=...
+make dev-dashscope
 ```
 
 By default the Makefile uses:
@@ -134,6 +143,40 @@ make dev-openai
 
 Try `marin` first, then `cedar`, then compare other voices if needed. For a plush toy, the first goal is not maximum realism; it is whether the child finds the voice friendly, clear, and not startling.
 
+## DashScope Voice Settings
+
+DashScope mode uses Alibaba Cloud Model Studio / DashScope for STT and TTS, while chat can still fall back to deterministic activities and mock replies if OpenAI is unavailable.
+
+```bash
+export CHAT_ARCHIVE_QWEN_API_KEY=...
+make dev-dashscope
+```
+
+Defaults:
+
+```bash
+export PUPBOX_VOICE_PROVIDER=dashscope
+export PUPBOX_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com
+export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
+export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
+export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
+export PUPBOX_DASHSCOPE_TTS_FORMAT=mp3
+export PUPBOX_DASHSCOPE_TTS_SPEED=0.88
+export PUPBOX_DASHSCOPE_TTS_SAMPLE_RATE=24000
+```
+
+The default TTS combination is `cosyvoice-v3-flash + longhuhu_v3` because it was verified against the live DashScope API. `cosyvoice-v3.5-flash` is supported as a configurable model, but the currently tested `longhuhu_v3` and `longxiaochun` voices returned engine error `418` with that model, so it is not the default yet.
+
+`PUPBOX_DASHSCOPE_TTS_PROMPT` is intentionally empty by default. The same verified voice returned engine errors when a default instruction was sent. Add a prompt only after testing the chosen model and voice combination.
+
+If your DashScope workspace requires the newer workspace-specific domain, set:
+
+```bash
+export PUPBOX_DASHSCOPE_BASE_URL=https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com
+```
+
+The browser records WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL.
+
 Never commit `.env`, API keys, recordings, transcripts, or private family data.
 
 ## API
@@ -161,6 +204,7 @@ make test-local       # go test + go build, no network API calls
 make test-openai-api  # local API smoke tests with tts=off
 make test-ui          # opens toy.html and checks browser console
 make dev-openai       # starts fixed-port OpenAI mode, requires OPENAI_API_KEY
+make dev-dashscope    # starts fixed-port DashScope voice mode, requires CHAT_ARCHIVE_QWEN_API_KEY or DASHSCOPE_API_KEY
 make dev-mock         # starts fixed-port mock mode
 make check-secrets    # scans for obvious committed secrets before pushing
 ```
@@ -171,8 +215,8 @@ Routine smoke tests use `tts=off` so they do not spend TTS quota.
 
 Use `http://127.0.0.1:8791/toy.html` for child-facing validation.
 
-1. Confirm the page says `OpenAI` and shows the expected voice and speed.
-2. Tap once to wake the dog and check whether the wake voice sounds like OpenAI TTS, not browser speech.
+1. Confirm the page says `OpenAI` or `阿里云` and shows the expected voice and speed.
+2. Tap once to wake the dog and check whether the wake voice sounds like server TTS, not browser speech.
 3. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should still respond with a simple playful activity.
 4. Say `豆豆讲故事`. The reply should be short enough to finish before the child loses attention.
 5. Say `我想玩插座`. The dog should route to a caregiver safety reply.

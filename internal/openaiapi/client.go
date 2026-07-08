@@ -75,6 +75,10 @@ func (c *Client) Available() bool {
 	return c != nil && c.apiKey != ""
 }
 
+func (c *Client) Name() string {
+	return "openai"
+}
+
 func (c *Client) ChatModel() string {
 	return c.chatModel
 }

@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/donychen1134/pupbox/internal/dashscopeapi"
 	"github.com/donychen1134/pupbox/internal/openaiapi"
 	"github.com/donychen1134/pupbox/internal/server"
 )
@@ -17,9 +19,11 @@ import (
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	addr := envDefault("PUPBOX_ADDR", "127.0.0.1:8787")
+	openAI := openaiapi.NewFromEnv()
 
 	srv := server.New(server.Config{
-		AI:        openaiapi.NewFromEnv(),
+		AI:        openAI,
+		Voice:     selectVoiceProvider(openAI),
 		StaticDir: "web/static",
 		Logger:    logger,
 	})
@@ -56,4 +60,22 @@ func envDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func selectVoiceProvider(openAI *openaiapi.Client) server.VoiceProvider {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("PUPBOX_VOICE_PROVIDER")))
+	switch provider {
+	case "mock", "none", "off":
+		return nil
+	case "dashscope", "aliyun", "qwen":
+		return dashscopeapi.NewFromEnv()
+	case "openai":
+		return openAI
+	}
+
+	dashscope := dashscopeapi.NewFromEnv()
+	if dashscope.Available() {
+		return dashscope
+	}
+	return openAI
 }
