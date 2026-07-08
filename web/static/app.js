@@ -167,7 +167,7 @@ function stopRecording() {
   document.body.classList.remove("recording");
   els.recordLabel.textContent = "按住说话";
   recorder.stop().then((recording) => {
-    sendRecording(recording.blob, recording.mimeType, recording.filename);
+    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs);
   }).catch(showError);
 }
 
@@ -256,8 +256,12 @@ async function sendRecognizedText(text) {
   }
 }
 
-async function sendRecording(blob, mimeType, filename) {
+async function sendRecording(blob, mimeType, filename, durationMs) {
   if (!blob || blob.size === 0) return;
+  if (durationMs && durationMs < 260) {
+    showError(new Error("录音太短，请按住说长一点点。"));
+    return;
+  }
   const form = new FormData();
   form.append("audio", blob, filename || "recording.wav");
 
@@ -283,6 +287,7 @@ function handleDogResponse(payload) {
 
   if (payload.ai_error) appendLog("warn", "API", payload.ai_error);
   if (payload.tts_error) appendLog("warn", "TTS", payload.tts_error);
+  if (payload.timings) appendLog("pup", "耗时", formatTimings(payload.timings));
 
   if (payload.audio_base64 && payload.audio_mime) {
     playBase64Audio(payload.audio_base64, payload.audio_mime);
@@ -314,6 +319,15 @@ function showError(error) {
   const message = error?.message || String(error);
   els.replyText.textContent = "豆豆这里出了一点小问题。";
   appendLog("warn", "错误", message);
+}
+
+function formatTimings(timings) {
+  const parts = [`总计 ${timings.total_ms || 0}ms`];
+  if (timings.stt_ms) parts.push(`听写 ${timings.stt_ms}ms`);
+  if (timings.reply_ms) parts.push(`回复 ${timings.reply_ms}ms`);
+  if (timings.tts_ms) parts.push(`合成 ${timings.tts_ms}ms`);
+  if (timings.audio_bytes) parts.push(`音频 ${Math.round(timings.audio_bytes / 1024)}KB`);
+  return parts.join(" / ");
 }
 
 async function fetchJSON(url) {
@@ -388,17 +402,20 @@ async function createWavRecorder(stream) {
       stream.getTracks().forEach((track) => track.stop());
       const sampleRate = context.sampleRate;
       await context.close();
+      const durationMs = Math.round((chunks.reduce((sum, chunk) => sum + chunk.length, 0) / sampleRate) * 1000);
       return {
         blob: encodeWav(chunks, sampleRate),
         mimeType: "audio/wav",
         filename: "recording.wav",
+        durationMs,
       };
     },
   };
 }
 
 function encodeWav(chunks, sampleRate) {
-  const samples = mergeFloat32(chunks);
+  const targetSampleRate = 16000;
+  const samples = resampleFloat32(mergeFloat32(chunks), sampleRate, targetSampleRate);
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
 
@@ -409,8 +426,8 @@ function encodeWav(chunks, sampleRate) {
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeString(view, 36, "data");
@@ -418,6 +435,21 @@ function encodeWav(chunks, sampleRate) {
   floatTo16BitPCM(view, 44, samples);
 
   return new Blob([buffer], { type: "audio/wav" });
+}
+
+function resampleFloat32(input, fromRate, toRate) {
+  if (!input.length || fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const length = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const position = i * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, input.length - 1);
+    const weight = position - left;
+    output[i] = input[left] * (1 - weight) + input[right] * weight;
+  }
+  return output;
 }
 
 function mergeFloat32(chunks) {

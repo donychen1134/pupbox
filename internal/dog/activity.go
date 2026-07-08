@@ -1,6 +1,9 @@
 package dog
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 type Activity struct {
 	ID       string `json:"id"`
@@ -90,11 +93,49 @@ func PlanActivity(text string) (Activity, bool) {
 		return byID("color_hunt")
 	case containsAny(t, "害怕", "怕", "想妈妈", "想爸爸", "哭", "抱抱"):
 		return byID("comfort")
-	case LooksLikeToddlerBabble(t), containsAny(t, "你好", "豆豆", "小狗", "玩", "拍拍"):
+	case LooksLikeToddlerBabble(t):
+		return babbleActivity(), true
+	case containsAny(t, "你好", "豆豆", "小狗", "玩", "拍拍"):
 		return byID("clap")
 	default:
 		return Activity{}, false
 	}
+}
+
+func babbleActivity() Activity {
+	activities := []Activity{
+		{
+			ID:       "clap",
+			Label:    "拍拍",
+			Prompt:   "豆豆拍拍手",
+			Reply:    "汪汪，豆豆听见啦。我们拍拍小手，一、二、三。",
+			Category: "movement",
+			Action:   "tail_wag",
+		},
+		{
+			ID:       "clap",
+			Label:    "拍拍",
+			Prompt:   "豆豆拍拍手",
+			Reply:    "嗯嗯，豆豆也嗯嗯。我们一起学小狗，小小声汪一下。",
+			Category: "movement",
+			Action:   "ear_wiggle",
+		},
+		{
+			ID:       "clap",
+			Label:    "拍拍",
+			Prompt:   "豆豆在这里。我们找一个红色的小东西，好不好？",
+			Category: "game",
+			Action:   "glow_red",
+		},
+		{
+			ID:       "clap",
+			Label:    "拍拍",
+			Prompt:   "豆豆摇摇尾巴。你也可以轻轻拍拍手。",
+			Category: "movement",
+			Action:   "tail_wag",
+		},
+	}
+	return activities[int(time.Now().UnixNano()%int64(len(activities)))]
 }
 
 func byID(id string) (Activity, bool) {

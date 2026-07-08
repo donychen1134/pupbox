@@ -7,6 +7,7 @@ const state = {
   health: null,
   awake: false,
   spaceDown: false,
+  thinkingSound: null,
 };
 
 const els = {
@@ -117,7 +118,7 @@ function stopPress() {
   state.recorder = null;
   state.recording = false;
   recorder.stop().then((recording) => {
-    sendRecording(recording.blob, recording.mimeType, recording.filename);
+    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs);
   }).catch(async () => {
     setPhase("idle", "没有听清", "按住");
     await speak("豆豆没有听清。再试一次吧。");
@@ -189,8 +190,13 @@ async function sendRecognizedText(text) {
   }
 }
 
-async function sendRecording(blob, mimeType, filename) {
+async function sendRecording(blob, mimeType, filename, durationMs) {
   if (!blob || blob.size === 0) return;
+  if (durationMs && durationMs < 260) {
+    setPhase("idle", "没有听清", "按住");
+    await speak("豆豆没有听清。再说长一点点。");
+    return;
+  }
   const form = new FormData();
   form.append("audio", blob, filename || "recording.wav");
 
@@ -239,6 +245,11 @@ function setPhase(phase, stateText, label) {
   document.body.classList.add(phase);
   els.toyState.textContent = stateText;
   els.recordLabel.textContent = label;
+  if (phase === "thinking") {
+    startThinkingSound();
+  } else {
+    stopThinkingSound();
+  }
 }
 
 function shouldUseBrowserSpeech() {
@@ -276,17 +287,20 @@ async function createWavRecorder(stream) {
       stream.getTracks().forEach((track) => track.stop());
       const sampleRate = context.sampleRate;
       await context.close();
+      const durationMs = Math.round((chunks.reduce((sum, chunk) => sum + chunk.length, 0) / sampleRate) * 1000);
       return {
         blob: encodeWav(chunks, sampleRate),
         mimeType: "audio/wav",
         filename: "recording.wav",
+        durationMs,
       };
     },
   };
 }
 
 function encodeWav(chunks, sampleRate) {
-  const samples = mergeFloat32(chunks);
+  const targetSampleRate = 16000;
+  const samples = resampleFloat32(mergeFloat32(chunks), sampleRate, targetSampleRate);
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
 
@@ -297,8 +311,8 @@ function encodeWav(chunks, sampleRate) {
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeString(view, 36, "data");
@@ -306,6 +320,21 @@ function encodeWav(chunks, sampleRate) {
   floatTo16BitPCM(view, 44, samples);
 
   return new Blob([buffer], { type: "audio/wav" });
+}
+
+function resampleFloat32(input, fromRate, toRate) {
+  if (!input.length || fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const length = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const position = i * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, input.length - 1);
+    const weight = position - left;
+    output[i] = input[left] * (1 - weight) + input[right] * weight;
+  }
+  return output;
 }
 
 function mergeFloat32(chunks) {
@@ -366,6 +395,48 @@ async function speakWithServerVoice(text) {
     // Fall back to browser speech below.
   }
   await speakInBrowser(text);
+}
+
+function startThinkingSound() {
+  if (state.thinkingSound) return;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const context = new AudioContext();
+  const play = () => {
+    if (state.thinkingSound?.context === context) playTonePair(context);
+  };
+  state.thinkingSound = {
+    context,
+    timer: window.setInterval(play, 1400),
+  };
+  context.resume().then(play).catch(() => {});
+}
+
+function stopThinkingSound() {
+  if (!state.thinkingSound) return;
+  window.clearInterval(state.thinkingSound.timer);
+  state.thinkingSound.context.close().catch(() => {});
+  state.thinkingSound = null;
+}
+
+function playTonePair(context) {
+  playTone(context, 523.25, 0, 0.08, 0.035);
+  playTone(context, 659.25, 0.1, 0.09, 0.03);
+}
+
+function playTone(context, frequency, delay, duration, gainValue) {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const start = context.currentTime + delay;
+  oscillator.type = "sine";
+  oscillator.frequency.value = frequency;
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.02);
 }
 
 function hasServerVoice() {

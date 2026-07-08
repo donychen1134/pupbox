@@ -165,6 +165,12 @@ export PUPBOX_DASHSCOPE_TTS_SPEED=0.88
 export PUPBOX_DASHSCOPE_TTS_SAMPLE_RATE=24000
 ```
 
+`make dev-dashscope` defaults to `PUPBOX_CHAT_PROVIDER=mock` to avoid OpenAI quota errors and reduce latency. To use OpenAI for non-deterministic replies while keeping DashScope STT/TTS:
+
+```bash
+make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai
+```
+
 The default TTS combination is `cosyvoice-v3-flash + longhuhu_v3` because it was verified against the live DashScope API. `cosyvoice-v3.5-flash` is supported as a configurable model, but the currently tested `longhuhu_v3` and `longxiaochun` voices returned engine error `418` with that model, so it is not the default yet.
 
 `PUPBOX_DASHSCOPE_TTS_PROMPT` is intentionally empty by default. The same verified voice returned engine errors when a default instruction was sent. Add a prompt only after testing the chosen model and voice combination.
@@ -175,7 +181,7 @@ If your DashScope workspace requires the newer workspace-specific domain, set:
 export PUPBOX_DASHSCOPE_BASE_URL=https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com
 ```
 
-The browser records WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL.
+The browser records 16 kHz mono WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL and reduces upload size. Recordings shorter than about 260 ms are ignored locally instead of being sent to STT.
 
 Never commit `.env`, API keys, recordings, transcripts, or private family data.
 
@@ -195,6 +201,20 @@ POST /api/voice  multipart/form-data audio=<recording>
 curl -sS -H 'Content-Type: application/json' \
   -d '{"text":"嗯嗯"}' \
   'http://127.0.0.1:8791/api/chat?tts=off'
+```
+
+Voice and chat responses include timing diagnostics:
+
+```json
+{
+  "timings": {
+    "total_ms": 2860,
+    "stt_ms": 640,
+    "reply_ms": 0,
+    "tts_ms": 2100,
+    "audio_bytes": 18244
+  }
+}
 ```
 
 ## Local Automation

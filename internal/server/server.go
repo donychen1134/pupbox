@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -61,7 +62,7 @@ func New(cfg Config) *Server {
 		mux:       http.NewServeMux(),
 		ai:        cfg.AI,
 		voice:     voice,
-		useChatAI: cfg.AI != nil && cfg.AI.Available() && !forceMock,
+		useChatAI: chatAIEnabled(cfg.AI, forceMock),
 		useVoice:  voice != nil && voice.Available() && !forceMock,
 		staticDir: cfg.StaticDir,
 		log:       logger,
@@ -107,6 +108,7 @@ func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var req chatRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -119,8 +121,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	timings := TimingStats{}
+	replyStarted := time.Now()
 	reply, safety, activity, source, aiErr := s.reply(r.Context(), text)
+	timings.ReplyMS = elapsedMS(replyStarted)
+	ttsStarted := time.Now()
 	audio, mime, ttsErr := s.speak(r, reply)
+	timings.TTSMS = elapsedMS(ttsStarted)
+	timings.TotalMS = elapsedMS(started)
 	writeJSON(w, http.StatusOK, chatResponse{
 		Transcript:  text,
 		Reply:       reply,
@@ -132,10 +140,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Source:      source,
 		AIError:     errorString(aiErr),
 		TTSError:    errorString(ttsErr),
+		Timings:     timings,
 	})
 }
 
 func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var req speechRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -151,20 +161,25 @@ func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, speechResponse{
 			Mode:     s.mode(),
 			TTSError: "server voice mode is not enabled",
+			Timings:  TimingStats{TotalMS: elapsedMS(started)},
 		})
 		return
 	}
 
+	ttsStarted := time.Now()
 	audio, mime, err := s.voice.Speak(r.Context(), dog.ClampReply(text, 90))
+	timings := TimingStats{TTSMS: elapsedMS(ttsStarted), TotalMS: elapsedMS(started)}
 	writeJSON(w, http.StatusOK, speechResponse{
 		AudioBase64: encodeAudio(audio),
 		AudioMIME:   mime,
 		Mode:        s.mode(),
 		TTSError:    errorString(err),
+		Timings:     timings,
 	})
 }
 
 func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	r.Body = http.MaxBytesReader(w, r.Body, 12<<20)
 	if err := r.ParseMultipartForm(12 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart audio upload")
@@ -190,25 +205,46 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 
 	filename := header.Filename
 	contentType := header.Header.Get("Content-Type")
+	timings := TimingStats{AudioBytes: int64(len(data))}
+	if isTooShortAudio(data, filename, contentType) {
+		timings.TotalMS = elapsedMS(started)
+		writeJSON(w, http.StatusOK, chatResponse{
+			Transcript: "",
+			Reply:      "豆豆刚才没有听清楚。你可以再说一遍吗？",
+			Mode:       s.mode(),
+			Source:     "stt_short_audio",
+			Timings:    timings,
+		})
+		return
+	}
 
 	transcript := "我想听一个小狗故事"
 	var sttErr error
 	if s.useVoice {
+		sttStarted := time.Now()
 		transcript, sttErr = s.voice.Transcribe(r.Context(), data, filename, contentType)
+		timings.STTMS = elapsedMS(sttStarted)
 		if sttErr != nil {
+			timings.TotalMS = elapsedMS(started)
 			writeJSON(w, http.StatusOK, chatResponse{
 				Transcript: "",
 				Reply:      "豆豆刚才没有听清楚。你可以再说一遍吗？",
 				Mode:       s.mode(),
 				Source:     "stt_error",
 				AIError:    sttErr.Error(),
+				Timings:    timings,
 			})
 			return
 		}
 	}
 
+	replyStarted := time.Now()
 	reply, safety, activity, source, aiErr := s.reply(r.Context(), transcript)
+	timings.ReplyMS = elapsedMS(replyStarted)
+	ttsStarted := time.Now()
 	audio, mime, ttsErr := s.speak(r, reply)
+	timings.TTSMS = elapsedMS(ttsStarted)
+	timings.TotalMS = elapsedMS(started)
 	writeJSON(w, http.StatusOK, chatResponse{
 		Transcript:  transcript,
 		Reply:       reply,
@@ -220,6 +256,7 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		Source:      source,
 		AIError:     errorString(aiErr),
 		TTSError:    errorString(ttsErr),
+		Timings:     timings,
 	})
 }
 
@@ -345,6 +382,18 @@ func (s *Server) ttsSpeed() float64 {
 	return s.voice.TTSSpeed()
 }
 
+func chatAIEnabled(ai *openaiapi.Client, forceMock bool) bool {
+	if ai == nil || !ai.Available() || forceMock {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PUPBOX_CHAT_PROVIDER"))) {
+	case "mock", "local", "off", "none":
+		return false
+	default:
+		return true
+	}
+}
+
 type chatRequest struct {
 	Text string `json:"text"`
 }
@@ -354,10 +403,11 @@ type speechRequest struct {
 }
 
 type speechResponse struct {
-	AudioBase64 string `json:"audio_base64,omitempty"`
-	AudioMIME   string `json:"audio_mime,omitempty"`
-	Mode        string `json:"mode"`
-	TTSError    string `json:"tts_error,omitempty"`
+	AudioBase64 string      `json:"audio_base64,omitempty"`
+	AudioMIME   string      `json:"audio_mime,omitempty"`
+	Mode        string      `json:"mode"`
+	TTSError    string      `json:"tts_error,omitempty"`
+	Timings     TimingStats `json:"timings"`
 }
 
 type chatResponse struct {
@@ -371,6 +421,77 @@ type chatResponse struct {
 	Source      string           `json:"source"`
 	AIError     string           `json:"ai_error,omitempty"`
 	TTSError    string           `json:"tts_error,omitempty"`
+	Timings     TimingStats      `json:"timings"`
+}
+
+type TimingStats struct {
+	TotalMS    int64 `json:"total_ms"`
+	STTMS      int64 `json:"stt_ms"`
+	ReplyMS    int64 `json:"reply_ms"`
+	TTSMS      int64 `json:"tts_ms"`
+	AudioBytes int64 `json:"audio_bytes,omitempty"`
+}
+
+func elapsedMS(started time.Time) int64 {
+	return time.Since(started).Milliseconds()
+}
+
+func isTooShortAudio(data []byte, filename, contentType string) bool {
+	if len(data) < 512 {
+		return true
+	}
+	if !looksLikeWAV(filename, contentType, data) {
+		return false
+	}
+	durationMS, ok := wavDurationMS(data)
+	return ok && durationMS < 220
+}
+
+func looksLikeWAV(filename, contentType string, data []byte) bool {
+	contentType = strings.ToLower(strings.Split(contentType, ";")[0])
+	return strings.Contains(contentType, "wav") ||
+		strings.HasSuffix(strings.ToLower(filename), ".wav") ||
+		(len(data) >= 12 && string(data[0:4]) == "RIFF" && string(data[8:12]) == "WAVE")
+}
+
+func wavDurationMS(data []byte) (int64, bool) {
+	if len(data) < 44 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
+		return 0, false
+	}
+
+	var channels, bitsPerSample uint16
+	var sampleRate uint32
+	var dataBytes uint32
+	for offset := 12; offset+8 <= len(data); {
+		chunkID := string(data[offset : offset+4])
+		chunkSize := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+		body := offset + 8
+		if body+chunkSize > len(data) {
+			return 0, false
+		}
+		switch chunkID {
+		case "fmt ":
+			if chunkSize >= 16 {
+				channels = binary.LittleEndian.Uint16(data[body+2 : body+4])
+				sampleRate = binary.LittleEndian.Uint32(data[body+4 : body+8])
+				bitsPerSample = binary.LittleEndian.Uint16(data[body+14 : body+16])
+			}
+		case "data":
+			dataBytes = uint32(chunkSize)
+		}
+		offset = body + chunkSize
+		if offset%2 == 1 {
+			offset++
+		}
+	}
+	if channels == 0 || bitsPerSample == 0 || sampleRate == 0 || dataBytes == 0 {
+		return 0, false
+	}
+	bytesPerSecond := int64(sampleRate) * int64(channels) * int64(bitsPerSample) / 8
+	if bytesPerSecond <= 0 {
+		return 0, false
+	}
+	return int64(dataBytes) * 1000 / bytesPerSecond, true
 }
 
 func encodeAudio(audio []byte) string {

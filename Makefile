@@ -2,6 +2,7 @@ PUPBOX_ADDR ?= 127.0.0.1:8791
 PUPBOX_BASE_URL ?= http://$(PUPBOX_ADDR)
 CODEX_HOME ?= $(HOME)/.codex
 PWCLI ?= $(CODEX_HOME)/skills/playwright/scripts/playwright_cli.sh
+DASHSCOPE_CHAT_PROVIDER ?= mock
 
 .PHONY: test-local test-openai-api test-ui dev-openai dev-dashscope dev-mock check-openai-key check-dashscope-key check-secrets
 
@@ -22,10 +23,10 @@ test-ui:
 	env CODEX_HOME="$(CODEX_HOME)" bash "$(PWCLI)" console
 
 dev-openai: check-openai-key
-	env -u PUPBOX_MODE PUPBOX_VOICE_PROVIDER=openai PUPBOX_ADDR="$(PUPBOX_ADDR)" go run ./cmd/pupbox-server
+	env -u PUPBOX_MODE PUPBOX_CHAT_PROVIDER=openai PUPBOX_VOICE_PROVIDER=openai PUPBOX_ADDR="$(PUPBOX_ADDR)" go run ./cmd/pupbox-server
 
 dev-dashscope: check-dashscope-key
-	env -u PUPBOX_MODE PUPBOX_VOICE_PROVIDER=dashscope PUPBOX_ADDR="$(PUPBOX_ADDR)" go run ./cmd/pupbox-server
+	env -u PUPBOX_MODE PUPBOX_CHAT_PROVIDER="$(DASHSCOPE_CHAT_PROVIDER)" PUPBOX_VOICE_PROVIDER=dashscope PUPBOX_ADDR="$(PUPBOX_ADDR)" go run ./cmd/pupbox-server
 
 dev-mock:
 	env PUPBOX_MODE=mock PUPBOX_ADDR="$(PUPBOX_ADDR)" go run ./cmd/pupbox-server

@@ -80,6 +80,8 @@ export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
 
 Do not send a default `PUPBOX_DASHSCOPE_TTS_PROMPT`. Live smoke tests showed `cosyvoice-v3-flash + longhuhu_v3` succeeds without `instruction`, while the same request can return CosyVoice engine errors when a default instruction is included.
 
+`make dev-dashscope` defaults to `PUPBOX_CHAT_PROVIDER=mock` through `DASHSCOPE_CHAT_PROVIDER=mock`. This avoids OpenAI quota failures in the default Alibaba voice workflow. Use `make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai` only when OpenAI API quota is available and richer fallback replies are needed.
+
 Do not write real key values into docs, examples, logs, screenshots, or commits.
 
 ## Development Notes
@@ -88,6 +90,8 @@ Do not write real key values into docs, examples, logs, screenshots, or commits.
 - Prefer adding reviewed content and activities over making the model more open-ended.
 - Keep future hardware actions as stable symbolic names such as `tail_wag`, `glow_red`, or `slow_breathe`; do not let model output directly control motors or PWM.
 - In server voice mode, `POST /api/chat` may synthesize TTS unless `tts=off` is set.
+- API responses should keep the `timings` object for latency diagnosis.
+- Browser microphone uploads should stay in 16 kHz mono WAV unless a provider-specific reason requires another format.
 - Use `toy.html` for child-facing flow verification and `index.html` for parent/debug verification.
 
 ## Verification Before Commit
