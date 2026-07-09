@@ -104,14 +104,20 @@ This avoids relying on a Mac that stays in the office and avoids building an iOS
 When exposing Pupbox outside localhost, set an access token:
 
 ```bash
-export PUPBOX_ACCESS_TOKEN=<long-random-token>
+export PUPBOX_ACCESS_TOKEN=<url-safe-random-token>
 export PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
+```
+
+Generate a URL-safe token with:
+
+```bash
+openssl rand -hex 32
 ```
 
 Open the child-facing page from the phone:
 
 ```text
-https://pupbox.example.com/toy.html?token=<long-random-token>
+https://pupbox.example.com/toy.html?token=<url-safe-random-token>
 ```
 
 The browser stores the token locally and removes it from the address bar after the first load. To clear the saved token:

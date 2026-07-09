@@ -89,7 +89,7 @@ Create `/etc/pupbox/pupbox.env`:
 PUPBOX_ADDR=127.0.0.1:8791
 PUPBOX_CHAT_PROVIDER=dashscope
 PUPBOX_VOICE_PROVIDER=dashscope
-PUPBOX_ACCESS_TOKEN=<generate-a-long-random-token>
+PUPBOX_ACCESS_TOKEN=<generate-a-url-safe-random-token>
 PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
 CHAT_ARCHIVE_QWEN_API_KEY=<dashscope-api-key>
 PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
@@ -115,8 +115,10 @@ chmod 700 /var/lib/pupbox
 Generate a token with a command such as:
 
 ```bash
-openssl rand -base64 32
+openssl rand -hex 32
 ```
+
+Use a URL-safe token because the phone entrypoint passes it through `?token=...`. Raw base64 tokens can contain `+`, `/`, or `=`, which are easy to mishandle in URLs unless encoded.
 
 ## systemd
 
