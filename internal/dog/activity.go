@@ -103,6 +103,11 @@ func PlanActivity(text string) (Activity, bool) {
 }
 
 func babbleActivity() Activity {
+	activities := babbleActivities()
+	return activities[int(time.Now().UnixNano()%int64(len(activities)))]
+}
+
+func babbleActivities() []Activity {
 	activities := []Activity{
 		{
 			ID:       "clap",
@@ -123,19 +128,19 @@ func babbleActivity() Activity {
 		{
 			ID:       "clap",
 			Label:    "拍拍",
-			Prompt:   "豆豆在这里。我们找一个红色的小东西，好不好？",
+			Reply:    "豆豆在这里。我们找一个红色的小东西，好不好？",
 			Category: "game",
 			Action:   "glow_red",
 		},
 		{
 			ID:       "clap",
 			Label:    "拍拍",
-			Prompt:   "豆豆摇摇尾巴。你也可以轻轻拍拍手。",
+			Reply:    "豆豆摇摇尾巴。你也可以轻轻拍拍手。",
 			Category: "movement",
 			Action:   "tail_wag",
 		},
 	}
-	return activities[int(time.Now().UnixNano()%int64(len(activities)))]
+	return activities
 }
 
 func byID(id string) (Activity, bool) {

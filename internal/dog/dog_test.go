@@ -37,6 +37,17 @@ func TestBabblePlansClapActivity(t *testing.T) {
 	if !ok || got.ID != "clap" {
 		t.Fatalf("expected clap activity, got %#v ok=%v", got, ok)
 	}
+	if got.Reply == "" {
+		t.Fatalf("expected babble activity reply, got %#v", got)
+	}
+}
+
+func TestBabbleActivitiesAllHaveReplies(t *testing.T) {
+	for _, activity := range babbleActivities() {
+		if activity.Reply == "" {
+			t.Fatalf("activity %q has empty reply: %#v", activity.ID, activity)
+		}
+	}
 }
 
 func TestClampReply(t *testing.T) {

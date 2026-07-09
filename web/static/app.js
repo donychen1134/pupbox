@@ -458,6 +458,7 @@ function formatTimings(timings) {
   if (timings.stt_ms) parts.push(`听写 ${timings.stt_ms}ms`);
   if (timings.reply_ms) parts.push(`回复 ${timings.reply_ms}ms`);
   if (timings.tts_ms) parts.push(`合成 ${timings.tts_ms}ms`);
+  if (timings.audio_duration_ms) parts.push(`录音 ${(timings.audio_duration_ms / 1000).toFixed(1)}s`);
   if (timings.audio_bytes) parts.push(`音频 ${Math.round(timings.audio_bytes / 1024)}KB`);
   return parts.join(" / ");
 }

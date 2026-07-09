@@ -278,6 +278,9 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 	filename := header.Filename
 	contentType := header.Header.Get("Content-Type")
 	timings := TimingStats{AudioBytes: int64(len(data))}
+	if durationMS, ok := audioDurationMS(data, filename, contentType); ok {
+		timings.AudioDurationMS = durationMS
+	}
 	if isTooShortAudio(data, filename, contentType) {
 		timings.TotalMS = elapsedMS(started)
 		response := chatResponse{
@@ -551,11 +554,12 @@ type chatResponse struct {
 }
 
 type TimingStats struct {
-	TotalMS    int64 `json:"total_ms"`
-	STTMS      int64 `json:"stt_ms"`
-	ReplyMS    int64 `json:"reply_ms"`
-	TTSMS      int64 `json:"tts_ms"`
-	AudioBytes int64 `json:"audio_bytes,omitempty"`
+	TotalMS         int64 `json:"total_ms"`
+	STTMS           int64 `json:"stt_ms"`
+	ReplyMS         int64 `json:"reply_ms"`
+	TTSMS           int64 `json:"tts_ms"`
+	AudioBytes      int64 `json:"audio_bytes,omitempty"`
+	AudioDurationMS int64 `json:"audio_duration_ms,omitempty"`
 }
 
 func elapsedMS(started time.Time) int64 {
@@ -566,11 +570,15 @@ func isTooShortAudio(data []byte, filename, contentType string) bool {
 	if len(data) < 512 {
 		return true
 	}
-	if !looksLikeWAV(filename, contentType, data) {
-		return false
-	}
-	durationMS, ok := wavDurationMS(data)
+	durationMS, ok := audioDurationMS(data, filename, contentType)
 	return ok && durationMS < 220
+}
+
+func audioDurationMS(data []byte, filename, contentType string) (int64, bool) {
+	if !looksLikeWAV(filename, contentType, data) {
+		return 0, false
+	}
+	return wavDurationMS(data)
 }
 
 func looksLikeWAV(filename, contentType string, data []byte) bool {
