@@ -90,6 +90,7 @@ PUPBOX_ADDR=127.0.0.1:8791
 PUPBOX_CHAT_PROVIDER=dashscope
 PUPBOX_VOICE_PROVIDER=dashscope
 PUPBOX_ACCESS_TOKEN=<generate-a-long-random-token>
+PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
 CHAT_ARCHIVE_QWEN_API_KEY=<dashscope-api-key>
 PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
 PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
@@ -102,6 +103,13 @@ Keep this file readable only by the service user or root:
 
 ```bash
 chmod 600 /etc/pupbox/pupbox.env
+```
+
+Create the event-log directory:
+
+```bash
+mkdir -p /var/lib/pupbox
+chmod 700 /var/lib/pupbox
 ```
 
 Generate a token with a command such as:
@@ -190,6 +198,14 @@ curl -sS \
   https://pupbox.983457.xyz/api/health
 ```
 
+The diagnostics API should return recent events after a few conversations:
+
+```bash
+curl -sS \
+  -H 'Authorization: Bearer <access-token>' \
+  'https://pupbox.983457.xyz/api/events?limit=50'
+```
+
 Open the toy page on the iPhone:
 
 ```text
@@ -206,5 +222,6 @@ https://pupbox.983457.xyz/toy.html?clearToken=1
 
 - Rotate `PUPBOX_ACCESS_TOKEN` if the URL is shared accidentally.
 - Do not paste real API keys or tokens into issue trackers, screenshots, docs, or commits.
+- Do not store audio recordings by default. The JSONL event log stores text transcripts, replies, routes, timings, and provider errors for diagnostics.
 - Keep routine tests on `tts=off` unless you explicitly want to spend TTS quota.
 - Start with browser validation before building an iOS app; this keeps the product risk focused on the child voice interaction.

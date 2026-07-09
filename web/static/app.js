@@ -6,6 +6,7 @@ const state = {
   speechSent: false,
   health: null,
   activities: [],
+  events: [],
   accessToken: "",
 };
 
@@ -22,6 +23,8 @@ const els = {
   textInput: document.querySelector("#textInput"),
   clearButton: document.querySelector("#clearButton"),
   logList: document.querySelector("#logList"),
+  refreshEventsButton: document.querySelector("#refreshEventsButton"),
+  eventList: document.querySelector("#eventList"),
 };
 
 init();
@@ -31,6 +34,7 @@ async function init() {
   bindEvents();
   await loadHealth();
   await loadActivities();
+  await loadEvents();
   appendLog("pup", "豆豆", "汪，豆豆在这里。");
 }
 
@@ -60,6 +64,10 @@ function bindEvents() {
   els.clearButton.addEventListener("click", () => {
     els.logList.replaceChildren();
   });
+
+  els.refreshEventsButton.addEventListener("click", () => {
+    loadEvents().catch(showError);
+  });
 }
 
 async function loadActivities() {
@@ -70,6 +78,120 @@ async function loadActivities() {
   } catch (error) {
     appendLog("warn", "活动", "活动列表加载失败");
   }
+}
+
+async function loadEvents() {
+  try {
+    const payload = await fetchJSON("/api/events?limit=50");
+    state.events = payload.events || [];
+    renderEvents();
+  } catch (error) {
+    if (error.status === 401) {
+      state.events = [];
+      renderEvents("需要访问 token 才能读取诊断记录");
+      return;
+    }
+    state.events = [];
+    renderEvents("诊断记录加载失败");
+  }
+}
+
+function renderEvents(message = "") {
+  els.eventList.replaceChildren();
+  if (message) {
+    els.eventList.append(emptyEvents(message));
+    return;
+  }
+  if (!state.events.length) {
+    els.eventList.append(emptyEvents("还没有持久诊断记录"));
+    return;
+  }
+  for (const event of state.events) {
+    els.eventList.append(renderEvent(event));
+  }
+}
+
+function renderEvent(event) {
+  const item = document.createElement("article");
+  item.className = `event-item${event.safety_triggered ? " safety" : ""}`;
+
+  const meta = document.createElement("div");
+  meta.className = "event-meta";
+  meta.append(
+    eventBadge(formatEventTime(event.time), ""),
+    eventBadge(event.endpoint || "-", ""),
+    eventBadge(event.mode || "-", ""),
+    eventBadge(event.source || "-", sourceClass(event.source)),
+    eventBadge(formatTimings(event.timings || {}), ""),
+  );
+
+  const body = document.createElement("div");
+  body.className = "event-body";
+  body.append(
+    eventLine("听到", event.transcript || "-"),
+    eventLine("回复", event.reply || "-"),
+  );
+  if (event.activity_label || event.safety_category) {
+    body.append(eventLine("路由", event.activity_label || event.safety_category));
+  }
+
+  item.append(meta, body);
+  const errors = eventErrors(event.errors);
+  if (errors) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "event-errors";
+    errorEl.textContent = errors;
+    item.append(errorEl);
+  }
+  return item;
+}
+
+function eventBadge(text, className) {
+  const badge = document.createElement("span");
+  badge.className = `event-badge${className ? ` ${className}` : ""}`;
+  badge.textContent = text;
+  return badge;
+}
+
+function eventLine(label, content) {
+  const row = document.createElement("div");
+  row.className = "event-line";
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+  const contentEl = document.createElement("strong");
+  contentEl.textContent = content;
+  row.append(labelEl, contentEl);
+  return row;
+}
+
+function emptyEvents(text) {
+  const empty = document.createElement("div");
+  empty.className = "empty-events";
+  empty.textContent = text;
+  return empty;
+}
+
+function sourceClass(source = "") {
+  if (source === "safety") return "source-safety";
+  if (source.startsWith("activity:")) return "source-activity";
+  if (source === "dashscope" || source === "openai") return "source-model";
+  return "";
+}
+
+function formatEventTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function eventErrors(errors) {
+  if (!errors) return "";
+  const parts = [];
+  if (errors.stt) parts.push(`STT: ${errors.stt}`);
+  if (errors.chat) parts.push(`Chat: ${errors.chat}`);
+  if (errors.tts) parts.push(`TTS: ${errors.tts}`);
+  return parts.join(" / ");
 }
 
 function renderActivities() {
@@ -303,6 +425,7 @@ function handleDogResponse(payload) {
   } else {
     speakInBrowser(reply);
   }
+  loadEvents().catch(() => {});
 }
 
 function appendLog(kind, speaker, content) {

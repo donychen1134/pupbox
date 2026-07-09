@@ -15,6 +15,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Safety rules that intercept dangerous or private topics before model calls.
 - Hardware action names in activity responses, ready to map to tail/LED/motion control.
 - Optional access-token protection for exposing the prototype over HTTPS.
+- JSONL event logging for the parent diagnostics page.
 
 ## Interaction Model
 
@@ -104,6 +105,7 @@ When exposing Pupbox outside localhost, set an access token:
 
 ```bash
 export PUPBOX_ACCESS_TOKEN=<long-random-token>
+export PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
 ```
 
 Open the child-facing page from the phone:
@@ -233,6 +235,7 @@ Never commit `.env`, API keys, recordings, transcripts, or private family data.
 ```text
 GET  /api/health
 GET  /api/activities
+GET  /api/events?limit=50
 POST /api/chat   {"text":"豆豆讲故事"}
 POST /api/speech {"text":"汪，豆豆醒啦"}
 POST /api/voice  multipart/form-data audio=<recording>
@@ -269,6 +272,8 @@ Voice and chat responses include timing diagnostics:
   }
 }
 ```
+
+`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, timings, and provider errors. Audio files, API keys, access tokens, and client IPs are not stored.
 
 ## Local Automation
 

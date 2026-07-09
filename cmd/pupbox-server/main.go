@@ -23,11 +23,12 @@ func main() {
 	dashscope := dashscopeapi.NewFromEnv()
 
 	srv := server.New(server.Config{
-		Chat:        selectChatProvider(openAI, dashscope),
-		Voice:       selectVoiceProvider(openAI, dashscope),
-		StaticDir:   "web/static",
-		AccessToken: os.Getenv("PUPBOX_ACCESS_TOKEN"),
-		Logger:      logger,
+		Chat:         selectChatProvider(openAI, dashscope),
+		Voice:        selectVoiceProvider(openAI, dashscope),
+		StaticDir:    "web/static",
+		AccessToken:  os.Getenv("PUPBOX_ACCESS_TOKEN"),
+		EventLogPath: envDefault("PUPBOX_EVENT_LOG_PATH", "data/events.jsonl"),
+		Logger:       logger,
 	})
 
 	httpServer := &http.Server{

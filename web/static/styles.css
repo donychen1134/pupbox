@@ -88,6 +88,12 @@ h2 {
   font-size: 26px;
 }
 
+h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .status-pill {
   min-width: 92px;
   padding: 10px 12px;
@@ -389,7 +395,7 @@ body.recording .mic-button {
 
 .debug-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(170px, 0.85fr) auto minmax(220px, 1.15fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -436,6 +442,121 @@ body.recording .mic-button {
   min-height: 0;
   padding: 16px;
   overflow: auto;
+}
+
+.events-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-top: 2px solid var(--line);
+  border-bottom: 2px solid var(--line);
+  background: #fff8dc;
+}
+
+.event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  background: #fbfffd;
+}
+
+.event-item {
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  overflow: hidden;
+}
+
+.event-item.safety {
+  background: #fff6f3;
+}
+
+.event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--line);
+  background: #f5f0e7;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.event-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--ink);
+}
+
+.event-badge.source-safety {
+  background: #ffe1d9;
+  color: #9d2f20;
+}
+
+.event-badge.source-activity {
+  background: #fff0b9;
+  color: #735300;
+}
+
+.event-badge.source-model {
+  background: #dff8ef;
+  color: var(--teal);
+}
+
+.event-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  line-height: 1.4;
+}
+
+.event-line {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.event-line span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.event-line strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.event-errors {
+  padding: 8px 10px;
+  border-top: 2px solid var(--line);
+  background: #ffe1d9;
+  color: #7f2519;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.empty-events {
+  border: 2px dashed rgba(34, 50, 43, 0.36);
+  border-radius: 8px;
+  padding: 18px;
+  color: var(--muted);
+  background: white;
+  font-weight: 900;
+  text-align: center;
 }
 
 .log-item {

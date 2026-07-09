@@ -8,12 +8,15 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/donychen1134/pupbox/internal/dog"
@@ -27,6 +30,8 @@ type Server struct {
 	useVoice    bool
 	staticDir   string
 	accessToken string
+	events      *EventStore
+	traceSeq    atomic.Uint64
 	log         *slog.Logger
 }
 
@@ -50,11 +55,12 @@ type VoiceProvider interface {
 }
 
 type Config struct {
-	Chat        ChatProvider
-	Voice       VoiceProvider
-	StaticDir   string
-	AccessToken string
-	Logger      *slog.Logger
+	Chat         ChatProvider
+	Voice        VoiceProvider
+	StaticDir    string
+	AccessToken  string
+	EventLogPath string
+	Logger       *slog.Logger
 }
 
 func New(cfg Config) *Server {
@@ -78,6 +84,7 @@ func New(cfg Config) *Server {
 		useVoice:    voice != nil && voice.Available() && !forceMock,
 		staticDir:   cfg.StaticDir,
 		accessToken: strings.TrimSpace(cfg.AccessToken),
+		events:      NewEventStore(cfg.EventLogPath),
 		log:         logger,
 	}
 	s.routes()
@@ -91,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.requireAccess(s.handleHealth))
 	s.mux.HandleFunc("GET /api/activities", s.requireAccess(s.handleActivities))
+	s.mux.HandleFunc("GET /api/events", s.requireAccess(s.handleEvents))
 	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
 	s.mux.HandleFunc("POST /api/speech", s.requireAccess(s.handleSpeech))
 	s.mux.HandleFunc("POST /api/voice", s.requireAccess(s.handleVoice))
@@ -133,6 +141,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"auth_required":  s.accessToken != "",
+		"event_log":      s.events != nil,
 		"mode":           s.mode(),
 		"dog":            dog.Name,
 		"chat_provider":  s.chatProvider(),
@@ -145,6 +154,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tts_speed":      s.ttsSpeed(),
 		"server_time":    time.Now().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	limit := parseEventLimit(r.URL.Query().Get("limit"))
+	if s.events == nil {
+		writeJSON(w, http.StatusOK, eventsResponse{Events: []ConversationEvent{}})
+		return
+	}
+	events, err := s.events.Recent(limit)
+	if err != nil {
+		s.log.Warn("failed to read event log", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to read event log")
+		return
+	}
+	writeJSON(w, http.StatusOK, eventsResponse{Events: events})
 }
 
 func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +199,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	audio, mime, ttsErr := s.speak(r, reply)
 	timings.TTSMS = elapsedMS(ttsStarted)
 	timings.TotalMS = elapsedMS(started)
-	writeJSON(w, http.StatusOK, chatResponse{
+	response := chatResponse{
 		Transcript:  text,
 		Reply:       reply,
 		AudioBase64: encodeAudio(audio),
@@ -187,7 +211,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		AIError:     errorString(aiErr),
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
-	})
+	}
+	s.recordConversation("chat", response, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr)})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
@@ -254,13 +280,15 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 	timings := TimingStats{AudioBytes: int64(len(data))}
 	if isTooShortAudio(data, filename, contentType) {
 		timings.TotalMS = elapsedMS(started)
-		writeJSON(w, http.StatusOK, chatResponse{
+		response := chatResponse{
 			Transcript: "",
 			Reply:      "豆豆刚才没有听清楚。你可以再说一遍吗？",
 			Mode:       s.mode(),
 			Source:     "stt_short_audio",
 			Timings:    timings,
-		})
+		}
+		s.recordConversation("voice", response, eventErrors{})
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 
@@ -272,14 +300,16 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		timings.STTMS = elapsedMS(sttStarted)
 		if sttErr != nil {
 			timings.TotalMS = elapsedMS(started)
-			writeJSON(w, http.StatusOK, chatResponse{
+			response := chatResponse{
 				Transcript: "",
 				Reply:      "豆豆刚才没有听清楚。你可以再说一遍吗？",
 				Mode:       s.mode(),
 				Source:     "stt_error",
 				AIError:    sttErr.Error(),
 				Timings:    timings,
-			})
+			}
+			s.recordConversation("voice", response, eventErrors{STT: sttErr.Error()})
+			writeJSON(w, http.StatusOK, response)
 			return
 		}
 	}
@@ -291,7 +321,7 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 	audio, mime, ttsErr := s.speak(r, reply)
 	timings.TTSMS = elapsedMS(ttsStarted)
 	timings.TotalMS = elapsedMS(started)
-	writeJSON(w, http.StatusOK, chatResponse{
+	response := chatResponse{
 		Transcript:  transcript,
 		Reply:       reply,
 		AudioBase64: encodeAudio(audio),
@@ -303,7 +333,46 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		AIError:     errorString(aiErr),
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
-	})
+	}
+	s.recordConversation("voice", response, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr)})
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) recordConversation(endpoint string, response chatResponse, errors eventErrors) {
+	if s.events == nil {
+		return
+	}
+	event := ConversationEvent{
+		Time:            time.Now().UTC().Format(time.RFC3339Nano),
+		TraceID:         s.nextTraceID(),
+		Endpoint:        endpoint,
+		Transcript:      response.Transcript,
+		Reply:           response.Reply,
+		Mode:            response.Mode,
+		Source:          response.Source,
+		SafetyTriggered: response.Safety.Triggered,
+		SafetyCategory:  response.Safety.Category,
+		Timings:         response.Timings,
+	}
+	if response.Activity != nil {
+		event.ActivityID = response.Activity.ID
+		event.ActivityLabel = response.Activity.Label
+	}
+	if errors.STT != "" || errors.Chat != "" || errors.TTS != "" {
+		event.Errors = &EventErrors{
+			STT:  errors.STT,
+			Chat: errors.Chat,
+			TTS:  errors.TTS,
+		}
+	}
+	if err := s.events.Append(event); err != nil {
+		s.log.Warn("failed to append event log", "error", err)
+	}
+}
+
+func (s *Server) nextTraceID() string {
+	seq := s.traceSeq.Add(1)
+	return fmt.Sprintf("%x-%x", time.Now().UnixNano(), seq)
 }
 
 func (s *Server) reply(ctx context.Context, text string) (string, dog.SafetyResult, *dog.Activity, string, error) {
@@ -438,6 +507,17 @@ func chatEnabled(chat ChatProvider, forceMock bool) bool {
 	default:
 		return true
 	}
+}
+
+func parseEventLimit(value string) int {
+	limit := 50
+	if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && parsed > 0 {
+		limit = parsed
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
 }
 
 type chatRequest struct {
