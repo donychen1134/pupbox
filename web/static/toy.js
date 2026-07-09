@@ -9,6 +9,7 @@ const state = {
   spaceDown: false,
   thinkingSound: null,
   accessToken: "",
+  activePointerId: null,
 };
 
 const els = {
@@ -31,20 +32,23 @@ function bindEvents() {
   els.recordButton.addEventListener("pointerdown", startPress);
   els.recordButton.addEventListener("pointerup", stopPress);
   els.recordButton.addEventListener("pointercancel", stopPress);
-  els.recordButton.addEventListener("pointerleave", () => {
-    if (state.recording) stopPress();
-  });
+  els.recordButton.addEventListener("lostpointercapture", clearPointerPress);
+  els.recordButton.addEventListener("contextmenu", blockButtonDefault);
+  els.recordButton.addEventListener("selectstart", blockButtonDefault);
+  els.recordButton.addEventListener("dragstart", blockButtonDefault);
 
   window.addEventListener("keydown", (event) => {
     if (event.code !== "Space" || state.spaceDown) return;
     event.preventDefault();
     state.spaceDown = true;
+    setButtonPressed(true);
     startPress(event);
   });
   window.addEventListener("keyup", (event) => {
     if (event.code !== "Space") return;
     event.preventDefault();
     state.spaceDown = false;
+    setButtonPressed(false);
     stopPress();
   });
 }
@@ -76,6 +80,12 @@ async function loadHealth() {
 
 async function startPress(event) {
   event?.preventDefault?.();
+  if (event?.pointerId !== undefined) {
+    if (!event.isPrimary || state.activePointerId !== null) return;
+    state.activePointerId = event.pointerId;
+    safeSetPointerCapture(event.pointerId);
+  }
+  setButtonPressed(true);
   if (state.recording) return;
   if (!state.awake) {
     state.awake = true;
@@ -104,6 +114,11 @@ async function startPress(event) {
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!isPressActive()) {
+      stream.getTracks().forEach((track) => track.stop());
+      setPhase("idle", "豆豆在这里", "按住");
+      return;
+    }
     const recorder = await createWavRecorder(stream);
     state.recorder = recorder;
     state.recording = true;
@@ -114,7 +129,12 @@ async function startPress(event) {
   }
 }
 
-function stopPress() {
+function stopPress(event) {
+  event?.preventDefault?.();
+  if (event?.pointerId !== undefined && state.activePointerId !== event.pointerId) return;
+  releasePointer(event);
+  setButtonPressed(false);
+
   if (state.recognition) {
     state.recording = false;
     state.recognition.stop();
@@ -148,7 +168,6 @@ function startBrowserSpeech(event) {
   state.speechSent = false;
   state.recording = true;
   setPhase("listening", "豆豆听着呢", "松开");
-  els.recordButton.setPointerCapture?.(event?.pointerId);
 
   recognition.addEventListener("result", (resultEvent) => {
     for (let i = resultEvent.resultIndex; i < resultEvent.results.length; i += 1) {
@@ -185,6 +204,46 @@ function startBrowserSpeech(event) {
 function cleanupSpeech() {
   state.recording = false;
   state.recognition = null;
+}
+
+function releasePointer(event) {
+  if (event?.pointerId !== undefined) {
+    safeReleasePointerCapture(event.pointerId);
+  }
+  state.activePointerId = null;
+}
+
+function safeSetPointerCapture(pointerId) {
+  try {
+    els.recordButton.setPointerCapture?.(pointerId);
+  } catch (error) {
+    // Synthetic tests and some cancelled browser gestures can lack an active pointer.
+  }
+}
+
+function safeReleasePointerCapture(pointerId) {
+  try {
+    els.recordButton.releasePointerCapture?.(pointerId);
+  } catch (error) {
+    // Ignore when the browser has already released capture.
+  }
+}
+
+function clearPointerPress() {
+  state.activePointerId = null;
+  setButtonPressed(false);
+}
+
+function setButtonPressed(pressed) {
+  els.recordButton.classList.toggle("is-pressed", pressed);
+}
+
+function isPressActive() {
+  return state.activePointerId !== null || state.spaceDown;
+}
+
+function blockButtonDefault(event) {
+  event.preventDefault();
 }
 
 async function sendRecognizedText(text) {

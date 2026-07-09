@@ -32,6 +32,13 @@ input {
   font: inherit;
 }
 
+button {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;

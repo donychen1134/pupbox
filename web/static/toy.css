@@ -15,6 +15,8 @@
 html,
 body {
   min-height: 100%;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -25,10 +27,19 @@ body {
     radial-gradient(circle at 50% 18%, rgba(255, 212, 93, 0.5), transparent 22%),
     linear-gradient(160deg, #fffdf4 0%, #e6f8f0 58%, #ffe6df 100%);
   font-family: Avenir Next, Gill Sans, Trebuchet MS, sans-serif;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 button {
   font: inherit;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .toy-shell {
@@ -36,6 +47,8 @@ button {
   place-items: center;
   min-height: 100vh;
   padding: 18px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .toy-stage {
@@ -213,14 +226,30 @@ h1 {
   font-weight: 900;
   cursor: pointer;
   touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
   transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 .paw-button:active,
+.paw-button.is-pressed,
 body.listening .paw-button {
   transform: translateY(10px);
   box-shadow: 0 2px 0 var(--line);
   background: var(--coral);
+}
+
+.paw-button:focus-visible {
+  outline: 4px solid rgba(18, 111, 106, 0.45);
+  outline-offset: 8px;
+}
+
+.paw-button * {
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 body.thinking .paw-button {
