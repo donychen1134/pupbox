@@ -10,6 +10,8 @@ const state = {
   thinkingSound: null,
   accessToken: "",
   activePointerId: null,
+  recordingStartedAt: 0,
+  recordingTimer: null,
 };
 
 const els = {
@@ -18,6 +20,7 @@ const els = {
   recordLabel: document.querySelector("#recordLabel"),
   toyState: document.querySelector("#toyState"),
   voiceNote: document.querySelector("#voiceNote"),
+  voiceLevel: document.querySelector("#voiceLevel"),
 };
 
 init();
@@ -122,8 +125,10 @@ async function startPress(event) {
     const recorder = await createWavRecorder(stream);
     state.recorder = recorder;
     state.recording = true;
+    startRecordingMeter(recorder);
     setPhase("listening", "豆豆听着呢", "松开");
   } catch (error) {
+    stopRecordingMeter();
     setPhase("idle", "没有听清", "按住");
     await speak("豆豆没有听清。再试一次吧。");
   }
@@ -137,6 +142,7 @@ function stopPress(event) {
 
   if (state.recognition) {
     state.recording = false;
+    stopRecordingMeter();
     state.recognition.stop();
     return;
   }
@@ -145,8 +151,9 @@ function stopPress(event) {
   const recorder = state.recorder;
   state.recorder = null;
   state.recording = false;
+  stopRecordingMeter();
   recorder.stop().then((recording) => {
-    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs);
+    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs, recording.peakLevel);
   }).catch(async () => {
     setPhase("idle", "没有听清", "按住");
     await speak("豆豆没有听清。再试一次吧。");
@@ -204,6 +211,7 @@ function startBrowserSpeech(event) {
 function cleanupSpeech() {
   state.recording = false;
   state.recognition = null;
+  stopRecordingMeter();
 }
 
 function releasePointer(event) {
@@ -238,6 +246,36 @@ function setButtonPressed(pressed) {
   els.recordButton.classList.toggle("is-pressed", pressed);
 }
 
+function startRecordingMeter(recorder) {
+  stopRecordingMeter();
+  state.recordingStartedAt = Date.now();
+  updateRecordingMeter(recorder);
+  state.recordingTimer = window.setInterval(() => updateRecordingMeter(recorder), 120);
+}
+
+function updateRecordingMeter(recorder) {
+  const durationMS = Date.now() - state.recordingStartedAt;
+  const seconds = Math.max(0, durationMS / 1000);
+  const level = recorder?.level?.() || 0;
+  const fill = Math.max(0.04, Math.min(1, level * 8));
+  document.body.style.setProperty("--voice-level", fill.toFixed(3));
+  if (durationMS > 900 && level < 0.012) {
+    els.toyState.textContent = `靠近一点 ${seconds.toFixed(1)}秒`;
+  } else {
+    els.toyState.textContent = `豆豆听着呢 ${seconds.toFixed(1)}秒`;
+  }
+  els.recordLabel.textContent = durationMS < 700 ? "说话" : "松开";
+}
+
+function stopRecordingMeter() {
+  if (state.recordingTimer) {
+    window.clearInterval(state.recordingTimer);
+    state.recordingTimer = null;
+  }
+  state.recordingStartedAt = 0;
+  document.body.style.setProperty("--voice-level", "0");
+}
+
 function isPressActive() {
   return state.activePointerId !== null || state.spaceDown;
 }
@@ -257,7 +295,7 @@ async function sendRecognizedText(text) {
   }
 }
 
-async function sendRecording(blob, mimeType, filename, durationMs) {
+async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
   if (!blob || blob.size === 0) return;
   if (durationMs && durationMs < 260) {
     setPhase("idle", "没有听清", "按住");
@@ -266,6 +304,8 @@ async function sendRecording(blob, mimeType, filename, durationMs) {
   }
   const form = new FormData();
   form.append("audio", blob, filename || "recording.wav");
+  if (durationMs) form.append("duration_ms", String(durationMs));
+  if (peakLevel) form.append("peak_level", String(peakLevel));
 
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
@@ -337,10 +377,22 @@ async function createWavRecorder(stream) {
   const processor = context.createScriptProcessor(4096, 1, 1);
   const gain = context.createGain();
   const chunks = [];
+  let latestRMS = 0;
+  let peakLevel = 0;
 
   gain.gain.value = 0;
   processor.onaudioprocess = (event) => {
-    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    const input = event.inputBuffer.getChannelData(0);
+    chunks.push(new Float32Array(input));
+    let sumSquares = 0;
+    let peak = 0;
+    for (let i = 0; i < input.length; i += 1) {
+      const abs = Math.abs(input[i]);
+      if (abs > peak) peak = abs;
+      sumSquares += input[i] * input[i];
+    }
+    latestRMS = Math.sqrt(sumSquares / input.length);
+    if (peak > peakLevel) peakLevel = peak;
   };
   source.connect(processor);
   processor.connect(gain);
@@ -360,7 +412,11 @@ async function createWavRecorder(stream) {
         mimeType: "audio/wav",
         filename: "recording.wav",
         durationMs,
+        peakLevel,
       };
+    },
+    level() {
+      return latestRMS;
     },
   };
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,12 +24,14 @@ func main() {
 	dashscope := dashscopeapi.NewFromEnv()
 
 	srv := server.New(server.Config{
-		Chat:         selectChatProvider(openAI, dashscope),
-		Voice:        selectVoiceProvider(openAI, dashscope),
-		StaticDir:    "web/static",
-		AccessToken:  os.Getenv("PUPBOX_ACCESS_TOKEN"),
-		EventLogPath: envDefault("PUPBOX_EVENT_LOG_PATH", "data/events.jsonl"),
-		Logger:       logger,
+		Chat:           selectChatProvider(openAI, dashscope),
+		Voice:          selectVoiceProvider(openAI, dashscope),
+		StaticDir:      "web/static",
+		AccessToken:    os.Getenv("PUPBOX_ACCESS_TOKEN"),
+		EventLogPath:   envDefault("PUPBOX_EVENT_LOG_PATH", "data/events.jsonl"),
+		RecordingDir:   os.Getenv("PUPBOX_RECORDING_DIR"),
+		RecordingLimit: envInt("PUPBOX_RECORDING_LIMIT", 20),
+		Logger:         logger,
 	})
 
 	httpServer := &http.Server{
@@ -61,6 +64,15 @@ func main() {
 func envDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
 	}
 	return fallback
 }

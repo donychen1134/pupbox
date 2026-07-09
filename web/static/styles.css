@@ -9,6 +9,7 @@
   --yellow: #ffd45d;
   --line: #22322b;
   --shadow: 0 18px 40px rgba(25, 32, 28, 0.16);
+  --voice-level: 0;
 }
 
 * {
@@ -306,7 +307,7 @@ body.recording .sound-rings span:nth-child(3) {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 14px;
-  padding: 18px;
+  padding: 18px 18px 10px;
 }
 
 .voice-note {
@@ -314,6 +315,37 @@ body.recording .sound-rings span:nth-child(3) {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.recording-meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  margin: 0 18px 10px;
+  opacity: 0.38;
+  transition: opacity 140ms ease;
+}
+
+.recording-meter span {
+  display: block;
+  height: 12px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--coral) calc(var(--voice-level) * 100%), white 0);
+}
+
+.recording-meter strong {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  text-align: right;
+}
+
+body.recording .recording-meter {
+  opacity: 1;
 }
 
 .mic-button,
@@ -410,6 +442,17 @@ body.recording .mic-button {
 .ghost-button {
   padding: 10px 12px;
   background: #f7fffb;
+}
+
+.ghost-button.compact {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.ghost-button:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .meta-grid {
@@ -554,6 +597,26 @@ body.recording .mic-button {
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.recording-playback {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.recording-audio {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.recording-audio audio {
+  width: 100%;
+  max-height: 36px;
 }
 
 .empty-events {

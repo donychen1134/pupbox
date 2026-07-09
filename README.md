@@ -106,6 +106,9 @@ When exposing Pupbox outside localhost, set an access token:
 ```bash
 export PUPBOX_ACCESS_TOKEN=<url-safe-random-token>
 export PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
+# Optional, parent-only diagnostic recording playback:
+export PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
+export PUPBOX_RECORDING_LIMIT=20
 ```
 
 Generate a URL-safe token with:
@@ -232,7 +235,9 @@ If your DashScope workspace requires the newer workspace-specific domain, set:
 export PUPBOX_DASHSCOPE_BASE_URL=https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com
 ```
 
-The browser records 16 kHz mono WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL and reduces upload size. Recordings shorter than about 260 ms are ignored locally instead of being sent to STT.
+The browser records 16 kHz mono WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL and reduces upload size. Recordings shorter than about 260 ms are ignored locally instead of being sent to STT. The browser pages show recording duration and a simple level meter so parent testing can spot short or quiet recordings.
+
+Optional diagnostic recording playback is disabled unless `PUPBOX_RECORDING_DIR` is set. When enabled, recent uploads are stored as short-retention files protected by the same access token; do not use this for long-term storage.
 
 Never commit `.env`, API keys, recordings, transcripts, or private family data.
 
@@ -242,6 +247,7 @@ Never commit `.env`, API keys, recordings, transcripts, or private family data.
 GET  /api/health
 GET  /api/activities
 GET  /api/events?limit=50
+GET  /api/recordings/<trace_id>
 POST /api/chat   {"text":"豆豆讲故事"}
 POST /api/speech {"text":"汪，豆豆醒啦"}
 POST /api/voice  multipart/form-data audio=<recording>
@@ -274,12 +280,15 @@ Voice and chat responses include timing diagnostics:
     "stt_ms": 640,
     "reply_ms": 0,
     "tts_ms": 2100,
+    "audio_duration_ms": 1100,
+    "audio_peak": 0.32,
+    "audio_rms": 0.04,
     "audio_bytes": 18244
   }
 }
 ```
 
-`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, timings, and provider errors. Audio files, API keys, access tokens, and client IPs are not stored.
+`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, timings, provider errors, and whether a protected diagnostic recording is available. Audio bytes, API keys, access tokens, and client IPs are not stored in the event log.
 
 ## Local Automation
 

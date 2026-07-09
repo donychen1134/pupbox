@@ -8,6 +8,8 @@ const state = {
   activities: [],
   events: [],
   accessToken: "",
+  recordingStartedAt: 0,
+  recordingTimer: null,
 };
 
 const els = {
@@ -25,6 +27,9 @@ const els = {
   logList: document.querySelector("#logList"),
   refreshEventsButton: document.querySelector("#refreshEventsButton"),
   eventList: document.querySelector("#eventList"),
+  recordingMeter: document.querySelector("#recordingMeter"),
+  recordingLevel: document.querySelector("#recordingLevel"),
+  recordingTime: document.querySelector("#recordingTime"),
 };
 
 init();
@@ -134,6 +139,9 @@ function renderEvent(event) {
   if (event.activity_label || event.safety_category) {
     body.append(eventLine("路由", event.activity_label || event.safety_category));
   }
+  if (event.has_recording && event.trace_id) {
+    body.append(recordingPlayback(event));
+  }
 
   item.append(meta, body);
   const errors = eventErrors(event.errors);
@@ -144,6 +152,41 @@ function renderEvent(event) {
     item.append(errorEl);
   }
   return item;
+}
+
+function recordingPlayback(event) {
+  const row = document.createElement("div");
+  row.className = "recording-playback";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost-button compact";
+  button.textContent = "加载录音";
+  const holder = document.createElement("div");
+  holder.className = "recording-audio";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "加载中";
+    try {
+      const response = await fetch(`/api/recordings/${encodeURIComponent(event.trace_id)}`, { headers: authHeaders() });
+      if (!response.ok) throw await responseError(response);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      holder.replaceChildren();
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.preload = "none";
+      audio.src = url;
+      audio.addEventListener("emptied", () => URL.revokeObjectURL(url), { once: true });
+      holder.append(audio);
+      button.textContent = "已加载";
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "重试录音";
+      holder.textContent = error?.message || "录音加载失败";
+    }
+  });
+  row.append(button, holder);
+  return row;
 }
 
 function eventBadge(text, className) {
@@ -191,6 +234,7 @@ function eventErrors(errors) {
   if (errors.stt) parts.push(`STT: ${errors.stt}`);
   if (errors.chat) parts.push(`Chat: ${errors.chat}`);
   if (errors.tts) parts.push(`TTS: ${errors.tts}`);
+  if (errors.recording) parts.push(`Recording: ${errors.recording}`);
   return parts.join(" / ");
 }
 
@@ -273,11 +317,13 @@ async function startRecording(event) {
     state.recording = true;
     document.body.classList.add("recording");
     els.recordLabel.textContent = "松开发送";
+    startRecordingMeter(recorder);
     els.recordButton.setPointerCapture?.(event.pointerId);
   } catch (error) {
     state.recording = false;
     document.body.classList.remove("recording");
     els.recordLabel.textContent = "按住说话";
+    stopRecordingMeter();
     showError(error);
   }
 }
@@ -287,6 +333,7 @@ function stopRecording() {
     state.recording = false;
     document.body.classList.remove("recording");
     els.recordLabel.textContent = "按住说话";
+    stopRecordingMeter();
     state.recognition.stop();
     return;
   }
@@ -297,8 +344,9 @@ function stopRecording() {
   state.recording = false;
   document.body.classList.remove("recording");
   els.recordLabel.textContent = "按住说话";
+  stopRecordingMeter();
   recorder.stop().then((recording) => {
-    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs);
+    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs, recording.peakLevel);
   }).catch(showError);
 }
 
@@ -365,6 +413,7 @@ function cleanupBrowserSpeech() {
   state.recognition = null;
   document.body.classList.remove("recording");
   els.recordLabel.textContent = "按住说话";
+  stopRecordingMeter();
 }
 
 async function sendRecognizedText(text) {
@@ -387,7 +436,7 @@ async function sendRecognizedText(text) {
   }
 }
 
-async function sendRecording(blob, mimeType, filename, durationMs) {
+async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
   if (!blob || blob.size === 0) return;
   if (durationMs && durationMs < 260) {
     showError(new Error("录音太短，请按住说长一点点。"));
@@ -395,6 +444,8 @@ async function sendRecording(blob, mimeType, filename, durationMs) {
   }
   const form = new FormData();
   form.append("audio", blob, filename || "recording.wav");
+  if (durationMs) form.append("duration_ms", String(durationMs));
+  if (peakLevel) form.append("peak_level", String(peakLevel));
 
   setBusy("豆豆听一听");
   try {
@@ -447,6 +498,36 @@ function setBusy(text) {
   els.sourceText.textContent = "pending";
 }
 
+function startRecordingMeter(recorder) {
+  stopRecordingMeter();
+  state.recordingStartedAt = Date.now();
+  updateRecordingMeter(recorder);
+  state.recordingTimer = window.setInterval(() => updateRecordingMeter(recorder), 120);
+}
+
+function updateRecordingMeter(recorder) {
+  const durationMS = Date.now() - state.recordingStartedAt;
+  const seconds = Math.max(0, durationMS / 1000);
+  const level = recorder?.level?.() || 0;
+  const fill = Math.max(0.04, Math.min(1, level * 8));
+  document.body.style.setProperty("--voice-level", fill.toFixed(3));
+  els.recordingTime.textContent = `${seconds.toFixed(1)}s`;
+  els.recordLabel.textContent = durationMS < 700 ? "继续说" : "松开发送";
+  els.replyText.textContent = durationMS > 900 && level < 0.012
+    ? `豆豆听一听：${seconds.toFixed(1)}s，声音偏小`
+    : `豆豆听一听：${seconds.toFixed(1)}s`;
+}
+
+function stopRecordingMeter() {
+  if (state.recordingTimer) {
+    window.clearInterval(state.recordingTimer);
+    state.recordingTimer = null;
+  }
+  state.recordingStartedAt = 0;
+  document.body.style.setProperty("--voice-level", "0");
+  if (els.recordingTime) els.recordingTime.textContent = "0.0s";
+}
+
 function showError(error) {
   const message = error?.message || String(error);
   els.replyText.textContent = "豆豆这里出了一点小问题。";
@@ -459,8 +540,13 @@ function formatTimings(timings) {
   if (timings.reply_ms) parts.push(`回复 ${timings.reply_ms}ms`);
   if (timings.tts_ms) parts.push(`合成 ${timings.tts_ms}ms`);
   if (timings.audio_duration_ms) parts.push(`录音 ${(timings.audio_duration_ms / 1000).toFixed(1)}s`);
+  if (timings.audio_peak) parts.push(`音量 ${formatAudioLevel(timings.audio_peak)}`);
   if (timings.audio_bytes) parts.push(`音频 ${Math.round(timings.audio_bytes / 1024)}KB`);
   return parts.join(" / ");
+}
+
+function formatAudioLevel(value) {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 }
 
 async function fetchJSON(url) {
@@ -580,10 +666,22 @@ async function createWavRecorder(stream) {
   const processor = context.createScriptProcessor(4096, 1, 1);
   const gain = context.createGain();
   const chunks = [];
+  let latestRMS = 0;
+  let peakLevel = 0;
 
   gain.gain.value = 0;
   processor.onaudioprocess = (event) => {
-    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    const input = event.inputBuffer.getChannelData(0);
+    chunks.push(new Float32Array(input));
+    let sumSquares = 0;
+    let peak = 0;
+    for (let i = 0; i < input.length; i += 1) {
+      const abs = Math.abs(input[i]);
+      if (abs > peak) peak = abs;
+      sumSquares += input[i] * input[i];
+    }
+    latestRMS = Math.sqrt(sumSquares / input.length);
+    if (peak > peakLevel) peakLevel = peak;
   };
   source.connect(processor);
   processor.connect(gain);
@@ -603,7 +701,11 @@ async function createWavRecorder(stream) {
         mimeType: "audio/wav",
         filename: "recording.wav",
         durationMs,
+        peakLevel,
       };
+    },
+    level() {
+      return latestRMS;
     },
   };
 }

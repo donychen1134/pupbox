@@ -27,20 +27,24 @@ type ConversationEvent struct {
 	SafetyCategory  string       `json:"safety_category,omitempty"`
 	ActivityID      string       `json:"activity_id,omitempty"`
 	ActivityLabel   string       `json:"activity_label,omitempty"`
+	HasRecording    bool         `json:"has_recording,omitempty"`
+	RecordingMIME   string       `json:"recording_mime,omitempty"`
 	Timings         TimingStats  `json:"timings"`
 	Errors          *EventErrors `json:"errors,omitempty"`
 }
 
 type EventErrors struct {
-	STT  string `json:"stt,omitempty"`
-	Chat string `json:"chat,omitempty"`
-	TTS  string `json:"tts,omitempty"`
+	STT       string `json:"stt,omitempty"`
+	Chat      string `json:"chat,omitempty"`
+	TTS       string `json:"tts,omitempty"`
+	Recording string `json:"recording,omitempty"`
 }
 
 type eventErrors struct {
-	STT  string
-	Chat string
-	TTS  string
+	STT       string
+	Chat      string
+	TTS       string
+	Recording string
 }
 
 type eventsResponse struct {

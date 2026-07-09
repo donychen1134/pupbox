@@ -16,7 +16,8 @@ Use `AGENTS.md` for durable Codex guidance. Do not create `AGENT.md` unless a sp
 - When exposing Pupbox beyond localhost, require `PUPBOX_ACCESS_TOKEN`; do not publish chat, speech, voice, or activity APIs without access-token protection.
 - Generate `PUPBOX_ACCESS_TOKEN` with URL-safe characters, such as `openssl rand -hex 32`; raw base64 tokens can contain `+`, `/`, or `=` and break `?token=...` links unless encoded.
 - For VPS deployment, do not upload files from the local workstation. Build release artifacts in GitHub Actions and install them on the VPS from GitHub Releases.
-- Event logs are for parent diagnostics only. Do not store audio recordings, access tokens, API keys, IP addresses, or private child/family data in event records.
+- Event logs are for parent diagnostics only. Do not store audio bytes, access tokens, API keys, IP addresses, or private child/family data in event records.
+- Audio recording playback must be opt-in diagnostics only. Keep short retention, protect it with `PUPBOX_ACCESS_TOKEN`, and never commit recording files.
 - Keep routine tests on `tts=off` unless the task explicitly requires OpenAI TTS verification.
 - Do not add continuous background listening by default. Prefer press-and-hold or a physical button.
 - Child-facing replies must be short, gentle, and concrete.

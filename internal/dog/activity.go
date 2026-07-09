@@ -72,9 +72,10 @@ func PlanActivity(text string) (Activity, bool) {
 	if t == "" {
 		return Activity{}, false
 	}
+	normalized := normalizeToddlerIntentText(t)
 
 	switch {
-	case containsAny(t, "唐诗", "古诗", "诗"):
+	case containsAny(normalized, "唐诗", "古诗", "背诗", "诗"):
 		return Activity{
 			ID:       "poem",
 			Label:    "唐诗",
@@ -83,23 +84,44 @@ func PlanActivity(text string) (Activity, bool) {
 			Category: "listen",
 			Action:   "glow_soft",
 		}, true
-	case containsAny(t, "故事", "讲故事"):
+	case containsAny(normalized, "故事", "讲故事", "讲个故事", "听故事", "小狗故事", "古事", "古是", "鼓事", "故是"):
 		return byID("story")
-	case containsAny(t, "动物", "猜谜", "猜"):
+	case containsAny(normalized, "动物", "小动物", "猜动物", "猜谜", "谜语", "猜"):
 		return byID("animal_guess")
-	case containsAny(t, "数数", "数字", "数"):
+	case containsAny(normalized, "数数", "数一数", "数字", "一二三", "123", "数"):
 		return byID("counting")
-	case containsAny(t, "颜色", "红色", "蓝色", "黄色", "绿色"):
+	case containsAny(normalized, "颜色", "找颜色", "找红色", "红色", "蓝色", "黄色", "绿色"):
 		return byID("color_hunt")
-	case containsAny(t, "害怕", "怕", "想妈妈", "想爸爸", "哭", "抱抱"):
+	case containsAny(normalized, "害怕", "怕", "想妈妈", "想爸爸", "妈妈", "爸爸", "哭", "抱抱"):
 		return byID("comfort")
-	case LooksLikeToddlerBabble(t):
+	case LooksLikeToddlerBabble(normalized):
 		return babbleActivity(), true
-	case containsAny(t, "你好", "豆豆", "小狗", "玩", "拍拍"):
+	case containsAny(normalized, "你好", "豆豆", "小狗", "狗狗", "汪汪", "旺旺", "玩", "拍拍", "拍手"):
 		return byID("clap")
 	default:
 		return Activity{}, false
 	}
+}
+
+func normalizeToddlerIntentText(text string) string {
+	replacer := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		"，", "",
+		",", "",
+		"。", "",
+		".", "",
+		"！", "",
+		"!", "",
+		"？", "",
+		"?", "",
+		"～", "",
+		"~", "",
+		"　", "",
+	)
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(text)))
 }
 
 func babbleActivity() Activity {

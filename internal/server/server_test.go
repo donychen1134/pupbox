@@ -1,13 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAccessTokenDisabledByDefault(t *testing.T) {
@@ -34,6 +38,7 @@ func TestAccessTokenProtectsAPIs(t *testing.T) {
 		{name: "health", method: http.MethodGet, path: "/api/health"},
 		{name: "activities", method: http.MethodGet, path: "/api/activities"},
 		{name: "events", method: http.MethodGet, path: "/api/events"},
+		{name: "recordings", method: http.MethodGet, path: "/api/recordings/abcd"},
 		{name: "chat", method: http.MethodPost, path: "/api/chat", body: `{"text":"嗯嗯"}`},
 		{name: "speech", method: http.MethodPost, path: "/api/speech", body: `{"text":"汪。"}`},
 		{name: "voice", method: http.MethodPost, path: "/api/voice"},
@@ -146,12 +151,105 @@ func TestAudioDurationMSWAV(t *testing.T) {
 	if isTooShortAudio(data, "recording.wav", "audio/wav") {
 		t.Fatal("did not expect 1s WAV to be treated as too short")
 	}
+	stats, ok := audioStats(data, "recording.wav", "audio/wav")
+	if !ok {
+		t.Fatal("expected WAV stats")
+	}
+	if stats.Peak != 0 || stats.RMS != 0 {
+		t.Fatalf("silent WAV stats = %+v, want zero levels", stats)
+	}
 }
 
 func TestIsTooShortAudioForTinyWAV(t *testing.T) {
 	data := testWAV(16_000, 1, 16, 1_600)
 	if !isTooShortAudio(data, "recording.wav", "audio/wav") {
 		t.Fatal("expected tiny WAV to be treated as too short")
+	}
+}
+
+func TestRecordingStoreSaveFindAndPrune(t *testing.T) {
+	dir := t.TempDir()
+	store := NewRecordingStore(dir, 1)
+	if _, err := store.Save("abcd-1", []byte("first"), "recording.wav", "audio/wav"); err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := store.Save("abcd-2", []byte("second"), "recording.wav", "audio/wav"); err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	if _, _, err := store.Find("abcd-1"); !os.IsNotExist(err) {
+		t.Fatalf("old recording err = %v, want not exist", err)
+	}
+	path, mimeType, err := store.Find("abcd-2")
+	if err != nil {
+		t.Fatalf("find second: %v", err)
+	}
+	if mimeType != "audio/wav" {
+		t.Fatalf("mime = %q, want audio/wav", mimeType)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read recording: %v", err)
+	}
+	if string(data) != "second" {
+		t.Fatalf("recording data = %q, want second", string(data))
+	}
+}
+
+func TestRecordingEndpointServesSavedAudio(t *testing.T) {
+	dir := t.TempDir()
+	srv := New(Config{RecordingDir: dir})
+	if _, err := srv.recordings.Save("abcd-1", []byte("audio"), "recording.wav", "audio/wav"); err != nil {
+		t.Fatalf("save recording: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/recordings/abcd-1", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "audio" {
+		t.Fatalf("body = %q, want audio", rec.Body.String())
+	}
+}
+
+func TestVoiceEventMarksDiagnosticRecording(t *testing.T) {
+	eventLogPath := filepath.Join(t.TempDir(), "events.jsonl")
+	recordingDir := t.TempDir()
+	srv := New(Config{EventLogPath: eventLogPath, RecordingDir: recordingDir})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	file, err := writer.CreateFormFile("audio", "recording.wav")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := file.Write(testWAV(16_000, 1, 16, 16_000)); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/voice?tts=off", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("voice status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	events, err := srv.events.Recent(1)
+	if err != nil {
+		t.Fatalf("events recent: %v", err)
+	}
+	if len(events) != 1 || !events[0].HasRecording {
+		t.Fatalf("event recording marker missing: %+v", events)
+	}
+	if events[0].Timings.AudioDurationMS == 0 {
+		t.Fatalf("event duration missing: %+v", events[0].Timings)
 	}
 }
 
