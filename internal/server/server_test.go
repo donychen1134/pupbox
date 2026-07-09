@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"mime/multipart"
@@ -94,6 +95,44 @@ func TestAccessTokenAcceptsQueryToken(t *testing.T) {
 	if response["auth_required"] != true {
 		t.Fatalf("auth_required = %v, want true", response["auth_required"])
 	}
+}
+
+func TestSpeechCachesTTS(t *testing.T) {
+	voice := &countingVoiceProvider{}
+	srv := New(Config{Voice: voice})
+
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/speech", strings.NewReader(`{"text":"汪，豆豆在这里。"}`))
+		req.Header.Set("Content-Type", "application/json")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("speech status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	if voice.speakCalls != 1 {
+		t.Fatalf("speakCalls = %d, want 1", voice.speakCalls)
+	}
+}
+
+type countingVoiceProvider struct {
+	speakCalls int
+}
+
+func (p *countingVoiceProvider) Available() bool   { return true }
+func (p *countingVoiceProvider) Name() string      { return "test-voice" }
+func (p *countingVoiceProvider) STTModel() string  { return "test-stt" }
+func (p *countingVoiceProvider) TTSModel() string  { return "test-tts" }
+func (p *countingVoiceProvider) TTSVoice() string  { return "test-speaker" }
+func (p *countingVoiceProvider) TTSFormat() string { return "wav" }
+func (p *countingVoiceProvider) TTSSpeed() float64 { return 1 }
+func (p *countingVoiceProvider) Transcribe(context.Context, []byte, string, string) (string, error) {
+	return "嗯嗯", nil
+}
+func (p *countingVoiceProvider) Speak(_ context.Context, text string) ([]byte, string, error) {
+	p.speakCalls++
+	return []byte("audio:" + text), "audio/wav", nil
 }
 
 func TestEventLogRecordsChatAndReturnsRecentEvents(t *testing.T) {

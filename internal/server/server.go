@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,8 +34,15 @@ type Server struct {
 	accessToken string
 	events      *EventStore
 	recordings  *RecordingStore
+	speechMu    sync.Mutex
+	speechCache map[string]cachedSpeech
 	traceSeq    atomic.Uint64
 	log         *slog.Logger
+}
+
+type cachedSpeech struct {
+	audio []byte
+	mime  string
 }
 
 type ChatProvider interface {
@@ -90,6 +98,7 @@ func New(cfg Config) *Server {
 		accessToken: strings.TrimSpace(cfg.AccessToken),
 		events:      NewEventStore(cfg.EventLogPath),
 		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
+		speechCache: make(map[string]cachedSpeech),
 		log:         logger,
 	}
 	s.routes()
@@ -261,7 +270,7 @@ func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ttsStarted := time.Now()
-	audio, mime, err := s.voice.Speak(r.Context(), dog.ClampReply(text, 90))
+	audio, mime, err := s.synthesizeSpeech(r.Context(), dog.ClampReply(text, 90))
 	timings := TimingStats{TTSMS: elapsedMS(ttsStarted), TotalMS: elapsedMS(started)}
 	writeJSON(w, http.StatusOK, speechResponse{
 		AudioBase64: encodeAudio(audio),
@@ -445,11 +454,41 @@ func (s *Server) speak(r *http.Request, text string) ([]byte, string, error) {
 	if !s.useVoice || strings.EqualFold(r.URL.Query().Get("tts"), "off") {
 		return nil, "", nil
 	}
-	audio, mime, err := s.voice.Speak(r.Context(), text)
+	return s.synthesizeSpeech(r.Context(), text)
+}
+
+func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, string, error) {
+	if !s.useVoice {
+		return nil, "", nil
+	}
+	key := s.speechCacheKey(text)
+	s.speechMu.Lock()
+	if cached, ok := s.speechCache[key]; ok {
+		audio := append([]byte(nil), cached.audio...)
+		s.speechMu.Unlock()
+		return audio, cached.mime, nil
+	}
+	s.speechMu.Unlock()
+
+	audio, mime, err := s.voice.Speak(ctx, text)
 	if err != nil {
 		return nil, "", err
 	}
+	s.speechMu.Lock()
+	s.speechCache[key] = cachedSpeech{audio: append([]byte(nil), audio...), mime: mime}
+	s.speechMu.Unlock()
 	return audio, mime, nil
+}
+
+func (s *Server) speechCacheKey(text string) string {
+	return strings.Join([]string{
+		s.voiceProvider(),
+		s.modelName("tts"),
+		s.modelName("voice"),
+		s.modelName("format"),
+		strconv.FormatFloat(s.ttsSpeed(), 'f', 3, 64),
+		text,
+	}, "\x00")
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

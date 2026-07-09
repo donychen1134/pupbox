@@ -1,3 +1,5 @@
+const SILENT_WAV_DATA_URI = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==";
+
 const state = {
   recorder: null,
   recognition: null,
@@ -10,6 +12,9 @@ const state = {
   accessToken: "",
   recordingStartedAt: 0,
   recordingTimer: null,
+  audioPlayer: null,
+  audioObjectURL: "",
+  audioUnlocked: false,
 };
 
 const els = {
@@ -40,7 +45,6 @@ async function init() {
   await loadHealth();
   await loadActivities();
   await loadEvents();
-  appendLog("pup", "豆豆", "汪，豆豆在这里。");
 }
 
 function bindEvents() {
@@ -90,14 +94,34 @@ async function loadEvents() {
     const payload = await fetchJSON("/api/events?limit=50");
     state.events = payload.events || [];
     renderEvents();
+    renderConversationHistory();
   } catch (error) {
     if (error.status === 401) {
       state.events = [];
       renderEvents("需要访问 token 才能读取诊断记录");
+      renderConversationHistory();
       return;
     }
     state.events = [];
     renderEvents("诊断记录加载失败");
+    renderConversationHistory();
+  }
+}
+
+function renderConversationHistory() {
+  els.logList.replaceChildren();
+  if (!state.events.length) {
+    appendLog("pup", "豆豆", "汪，豆豆在这里。");
+    return;
+  }
+  const events = [...state.events].reverse();
+  for (const event of events) {
+    if (event.transcript) appendLog("child", "小朋友", event.transcript);
+    if (event.reply) {
+      appendLog(event.safety_triggered ? "warn" : "pup", event.safety_triggered ? "安全提醒" : "豆豆", event.reply);
+    }
+    const errors = eventErrors(event.errors);
+    if (errors) appendLog("warn", "错误", errors);
   }
 }
 
@@ -293,6 +317,7 @@ async function loadHealth() {
 
 async function startRecording(event) {
   event.preventDefault();
+  unlockAudioPlayback();
   if (state.recording) return;
 
   if (shouldUseBrowserSpeech()) {
@@ -459,7 +484,7 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
   }
 }
 
-function handleDogResponse(payload) {
+async function handleDogResponse(payload) {
   const reply = payload.reply || "豆豆没有想好。";
   const className = payload.safety?.triggered ? "warn" : "pup";
   els.replyText.textContent = reply;
@@ -472,7 +497,8 @@ function handleDogResponse(payload) {
   if (payload.timings) appendLog("pup", "耗时", formatTimings(payload.timings));
 
   if (payload.audio_base64 && payload.audio_mime) {
-    playBase64Audio(payload.audio_base64, payload.audio_mime);
+    const played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
+    if (!played) speakInBrowser(reply);
   } else {
     speakInBrowser(reply);
   }
@@ -780,9 +806,50 @@ function playBase64Audio(base64, mimeType) {
     bytes[i] = binary.charCodeAt(i);
   }
   const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  const audio = new Audio(url);
-  audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
-  audio.play().catch(() => speakInBrowser(els.replyText.textContent));
+  const audio = audioPlayer();
+  if (state.audioObjectURL) URL.revokeObjectURL(state.audioObjectURL);
+  state.audioObjectURL = url;
+  audio.pause();
+  audio.muted = false;
+  audio.src = url;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (played) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      if (state.audioObjectURL === url) state.audioObjectURL = "";
+      resolve(played);
+    };
+    audio.addEventListener("ended", () => finish(true), { once: true });
+    audio.addEventListener("error", () => finish(false), { once: true });
+    audio.play().catch(() => finish(false));
+  });
+}
+
+function unlockAudioPlayback() {
+  if (state.audioUnlocked) return;
+  const audio = audioPlayer();
+  audio.muted = true;
+  audio.src = SILENT_WAV_DATA_URI;
+  audio.play().then(() => {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+    state.audioUnlocked = true;
+  }).catch(() => {
+    audio.muted = false;
+    state.audioUnlocked = false;
+  });
+}
+
+function audioPlayer() {
+  if (!state.audioPlayer) {
+    state.audioPlayer = new Audio();
+    state.audioPlayer.preload = "auto";
+    state.audioPlayer.playsInline = true;
+  }
+  return state.audioPlayer;
 }
 
 function speakInBrowser(text) {

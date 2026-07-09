@@ -1,3 +1,5 @@
+const SILENT_WAV_DATA_URI = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==";
+
 const state = {
   recorder: null,
   recognition: null,
@@ -12,6 +14,9 @@ const state = {
   activePointerId: null,
   recordingStartedAt: 0,
   recordingTimer: null,
+  audioPlayer: null,
+  audioObjectURL: "",
+  audioUnlocked: false,
 };
 
 const els = {
@@ -83,6 +88,7 @@ async function loadHealth() {
 
 async function startPress(event) {
   event?.preventDefault?.();
+  unlockAudioPlayback();
   if (event?.pointerId !== undefined) {
     if (!event.isPrimary || state.activePointerId !== null) return;
     state.activePointerId = event.pointerId;
@@ -323,7 +329,8 @@ async function handleDogResponse(payload) {
   const reply = payload.reply || "豆豆没有想好。";
   setPhase("speaking", payload.safety?.triggered ? "找爸爸妈妈" : actionLabel(payload), "按住");
   if (payload.audio_base64 && payload.audio_mime) {
-    await playBase64Audio(payload.audio_base64, payload.audio_mime);
+    const played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
+    if (!played) await speakInBrowser(reply);
   } else {
     await speak(reply);
   }
@@ -666,16 +673,52 @@ function playBase64Audio(base64, mimeType) {
     bytes[i] = binary.charCodeAt(i);
   }
   const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  const audio = new Audio(url);
+  const audio = audioPlayer();
+  if (state.audioObjectURL) URL.revokeObjectURL(state.audioObjectURL);
+  state.audioObjectURL = url;
+  audio.pause();
+  audio.muted = false;
+  audio.src = url;
   return new Promise((resolve) => {
-    audio.addEventListener("ended", () => {
+    let settled = false;
+    const finish = (played) => {
+      if (settled) return;
+      settled = true;
       URL.revokeObjectURL(url);
-      resolve();
+      if (state.audioObjectURL === url) state.audioObjectURL = "";
+      resolve(played);
+    };
+    audio.addEventListener("ended", () => {
+      finish(true);
     }, { once: true });
     audio.addEventListener("error", () => {
-      URL.revokeObjectURL(url);
-      resolve();
+      finish(false);
     }, { once: true });
-    audio.play().catch(resolve);
+    audio.play().catch(() => finish(false));
   });
+}
+
+function unlockAudioPlayback() {
+  if (state.audioUnlocked) return;
+  const audio = audioPlayer();
+  audio.muted = true;
+  audio.src = SILENT_WAV_DATA_URI;
+  audio.play().then(() => {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+    state.audioUnlocked = true;
+  }).catch(() => {
+    audio.muted = false;
+    state.audioUnlocked = false;
+  });
+}
+
+function audioPlayer() {
+  if (!state.audioPlayer) {
+    state.audioPlayer = new Audio();
+    state.audioPlayer.preload = "auto";
+    state.audioPlayer.playsInline = true;
+  }
+  return state.audioPlayer;
 }
