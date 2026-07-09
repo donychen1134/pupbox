@@ -123,7 +123,7 @@ func (s *RecordingStore) prune() error {
 
 func normalizeRecordingMIME(filename, contentType string) string {
 	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	if contentType == "audio/x-wav" {
+	if contentType == "audio/x-wav" || contentType == "audio/vnd.wave" {
 		return "audio/wav"
 	}
 	if contentType != "" && contentType != "application/octet-stream" {
