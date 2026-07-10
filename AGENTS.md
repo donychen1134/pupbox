@@ -105,6 +105,7 @@ Do not write real key values into docs, examples, logs, screenshots, or commits.
 - Keep future hardware actions as stable symbolic names such as `tail_wag`, `glow_red`, or `slow_breathe`; do not let model output directly control motors or PWM.
 - In server voice mode, `POST /api/chat` may synthesize TTS unless `tts=off` is set.
 - API responses should keep the `timings` object for latency diagnosis.
+- Keep `/api/speech-stream` additive and preserve complete-audio fallback; the parent diagnostics page should not depend on browser PCM streaming.
 - Browser microphone uploads should stay in 16 kHz mono WAV unless a provider-specific reason requires another format.
 - Use `toy.html` for child-facing flow verification and `index.html` for parent/debug verification.
 

@@ -3,9 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +48,7 @@ func TestAccessTokenProtectsAPIs(t *testing.T) {
 		{name: "recordings", method: http.MethodGet, path: "/api/recordings/abcd"},
 		{name: "chat", method: http.MethodPost, path: "/api/chat", body: `{"text":"嗯嗯"}`},
 		{name: "speech", method: http.MethodPost, path: "/api/speech", body: `{"text":"汪。"}`},
+		{name: "speech stream", method: http.MethodPost, path: "/api/speech-stream", body: `{"text":"汪。"}`},
 		{name: "voice", method: http.MethodPost, path: "/api/voice"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +121,114 @@ func TestSpeechCachesTTS(t *testing.T) {
 	if calls := voice.speakCalls.Load(); calls != 1 {
 		t.Fatalf("speakCalls = %d, want 1", calls)
 	}
+}
+
+func TestSpeechStreamEmitsChunksAndPersistsCache(t *testing.T) {
+	dir := t.TempDir()
+	voice := &testStreamingVoiceProvider{chunks: [][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}}}
+	first := New(Config{Voice: voice, SpeechCacheDir: dir})
+	firstEvents := requestSpeechStream(t, first, "豆豆流式说话")
+	if len(firstEvents) != 3 || firstEvents[0].Type != "audio" || firstEvents[1].Type != "audio" || firstEvents[2].Type != "done" {
+		t.Fatalf("first events = %#v", firstEvents)
+	}
+	if firstEvents[2].Cache != "miss" || firstEvents[2].Timings == nil {
+		t.Fatalf("first done event = %#v", firstEvents[2])
+	}
+	if calls := voice.streamCalls.Load(); calls != 1 {
+		t.Fatalf("stream calls = %d, want 1", calls)
+	}
+
+	restartedVoice := &testStreamingVoiceProvider{chunks: voice.chunks}
+	restarted := New(Config{Voice: restartedVoice, SpeechCacheDir: dir})
+	cachedEvents := requestSpeechStream(t, restarted, "豆豆流式说话")
+	if len(cachedEvents) != 2 || cachedEvents[0].Type != "audio" || cachedEvents[1].Type != "done" {
+		t.Fatalf("cached events = %#v", cachedEvents)
+	}
+	if cachedEvents[0].Cache != "stream" || cachedEvents[1].Cache != "stream" {
+		t.Fatalf("cached event sources = %q, %q", cachedEvents[0].Cache, cachedEvents[1].Cache)
+	}
+	if calls := restartedVoice.streamCalls.Load(); calls != 0 {
+		t.Fatalf("stream calls after restart = %d, want 0", calls)
+	}
+	want := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	got, err := base64.StdEncoding.DecodeString(cachedEvents[0].AudioBase64)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("cached audio = %v err=%v, want %v", got, err, want)
+	}
+}
+
+func TestSpeechStreamFallsBackForNonStreamingProvider(t *testing.T) {
+	voice := &countingVoiceProvider{}
+	srv := New(Config{Voice: voice})
+	events := requestSpeechStream(t, srv, "豆豆回退说话")
+	if len(events) != 2 || events[0].Type != "audio" || events[1].Type != "done" {
+		t.Fatalf("events = %#v", events)
+	}
+	if events[0].Cache != "fallback" || events[1].Cache != "fallback" {
+		t.Fatalf("fallback sources = %q, %q", events[0].Cache, events[1].Cache)
+	}
+	if calls := voice.speakCalls.Load(); calls != 1 {
+		t.Fatalf("speak calls = %d, want 1", calls)
+	}
+}
+
+func requestSpeechStream(t *testing.T, srv *Server, text string) []speechStreamEvent {
+	t.Helper()
+	body, err := json.Marshal(speechRequest{Text: text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/speech-stream", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("speech stream status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	decoder := json.NewDecoder(rec.Body)
+	var events []speechStreamEvent
+	for {
+		var event speechStreamEvent
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatalf("decode stream event: %v", err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+type testStreamingVoiceProvider struct {
+	streamCalls atomic.Int32
+	chunks      [][]byte
+}
+
+func (p *testStreamingVoiceProvider) Available() bool   { return true }
+func (p *testStreamingVoiceProvider) Name() string      { return "streaming-voice" }
+func (p *testStreamingVoiceProvider) STTModel() string  { return "test-stt" }
+func (p *testStreamingVoiceProvider) TTSModel() string  { return "test-tts" }
+func (p *testStreamingVoiceProvider) TTSVoice() string  { return "test-speaker" }
+func (p *testStreamingVoiceProvider) TTSFormat() string { return "mp3" }
+func (p *testStreamingVoiceProvider) TTSSpeed() float64 { return 1 }
+func (p *testStreamingVoiceProvider) StreamSampleRate() int {
+	return 24000
+}
+func (p *testStreamingVoiceProvider) Transcribe(context.Context, []byte, string, string) (string, error) {
+	return "嗯嗯", nil
+}
+func (p *testStreamingVoiceProvider) Speak(_ context.Context, text string) ([]byte, string, error) {
+	return []byte("complete:" + text), "audio/mpeg", nil
+}
+func (p *testStreamingVoiceProvider) StreamSpeak(_ context.Context, _ string, onChunk func([]byte) error) (string, int, error) {
+	p.streamCalls.Add(1)
+	for _, chunk := range p.chunks {
+		if err := onChunk(chunk); err != nil {
+			return "", 0, err
+		}
+	}
+	return "audio/pcm", 24000, nil
 }
 
 type countingVoiceProvider struct {

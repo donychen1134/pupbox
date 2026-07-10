@@ -221,7 +221,7 @@ function stopRecordingMeter() {
 async function sendRecognizedText(text) {
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
-    const response = await postJSON("/api/chat", { text });
+    const response = await postJSON("/api/chat?tts=off", { text });
     await handleDogResponse(response);
   } catch (error) {
     await speakStatus(
@@ -244,7 +244,7 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
 
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
-    const response = await fetch("/api/voice", { method: "POST", headers: authHeaders(), body: form });
+    const response = await fetch("/api/voice?tts=off", { method: "POST", headers: authHeaders(), body: form });
     if (!response.ok) throw await responseError(response);
     const payload = await response.json();
     await handleDogResponse(payload);
@@ -258,14 +258,129 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
 
 async function handleDogResponse(payload) {
   const reply = payload.reply || "豆豆没有想好。";
-  setPhase("speaking", payload.safety?.triggered ? "找爸爸妈妈" : actionLabel(payload), "等一下");
+  const speakingState = payload.safety?.triggered ? "找爸爸妈妈" : actionLabel(payload);
+  let played = false;
   if (payload.audio_base64 && payload.audio_mime) {
-    const played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
-    if (!played) await speakInBrowser(reply);
-  } else {
+    setPhase("speaking", speakingState, "等一下");
+    played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
+  } else if (hasServerVoice() && state.health?.tts_streaming) {
+    played = await playSpeechStream(reply, () => {
+      setPhase("speaking", speakingState, "等一下");
+    });
+  }
+  if (!played) {
+    setPhase("speaking", speakingState, "等一下");
     await speak(reply);
   }
   setPhase("idle", "按住小爪子说话", "按住说话");
+}
+
+async function playSpeechStream(text, onFirstAudio) {
+  try {
+    const response = await fetch("/api/speech-stream", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok || !response.body) return false;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const completePlayback = [];
+    let pcmPlayer = null;
+    let buffer = "";
+    let started = false;
+
+    const processLine = (line) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line);
+      if (event.type !== "audio" || !event.audio_base64) return;
+      if (!started) {
+        started = true;
+        onFirstAudio?.();
+      }
+      if (event.audio_mime === "audio/pcm") {
+        if (!pcmPlayer) pcmPlayer = createPCMPlayer(event.sample_rate || 24000);
+        pcmPlayer?.enqueue(event.audio_base64);
+      } else {
+        completePlayback.push(playBase64Audio(event.audio_base64, event.audio_mime || "audio/mpeg"));
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) processLine(line);
+      if (done) break;
+    }
+    if (buffer.trim()) processLine(buffer);
+    if (pcmPlayer) await pcmPlayer.finish();
+    if (completePlayback.length) await Promise.all(completePlayback);
+    return started;
+  } catch (error) {
+    return false;
+  }
+}
+
+function createPCMPlayer(sampleRate) {
+  const context = unlockFeedbackAudio();
+  if (!context) return null;
+  let nextStart = context.currentTime + 0.18;
+  let pending = 0;
+  let finished = false;
+  let leftover = null;
+  let resolveFinished;
+  const finishedPromise = new Promise((resolve) => {
+    resolveFinished = resolve;
+  });
+
+  const finishIfReady = () => {
+    if (finished && pending === 0) resolveFinished();
+  };
+
+  return {
+    enqueue(base64) {
+      let bytes = decodeBase64Bytes(base64);
+      if (leftover !== null) {
+        const joined = new Uint8Array(bytes.length + 1);
+        joined[0] = leftover;
+        joined.set(bytes, 1);
+        bytes = joined;
+        leftover = null;
+      }
+      if (bytes.length % 2 === 1) {
+        leftover = bytes[bytes.length - 1];
+        bytes = bytes.subarray(0, bytes.length - 1);
+      }
+      if (!bytes.length) return;
+
+      const samples = new Float32Array(bytes.length / 2);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      for (let i = 0; i < samples.length; i += 1) {
+        samples[i] = view.getInt16(i * 2, true) / 32768;
+      }
+      const audioBuffer = context.createBuffer(1, samples.length, sampleRate);
+      audioBuffer.copyToChannel(samples, 0);
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+      const startAt = Math.max(nextStart, context.currentTime + 0.03);
+      source.start(startAt);
+      nextStart = startAt + audioBuffer.duration;
+      pending += 1;
+      source.addEventListener("ended", () => {
+        pending -= 1;
+        finishIfReady();
+      }, { once: true });
+    },
+    finish() {
+      finished = true;
+      finishIfReady();
+      return finishedPromise;
+    },
+  };
 }
 
 async function speakStatus(text, stateText) {
@@ -638,11 +753,7 @@ function speakInBrowser(text) {
 }
 
 function playBase64Audio(base64, mimeType) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  const bytes = decodeBase64Bytes(base64);
   const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
   const audio = audioPlayer();
   if (state.audioObjectURL) URL.revokeObjectURL(state.audioObjectURL);
@@ -667,6 +778,15 @@ function playBase64Audio(base64, mimeType) {
     }, { once: true });
     audio.play().catch(() => finish(false));
   });
+}
+
+function decodeBase64Bytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 function unlockAudioPlayback() {

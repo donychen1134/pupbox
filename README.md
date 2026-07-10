@@ -19,6 +19,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Short-lived in-memory conversation context for natural follow-up questions.
 - Reviewed rotating content for short stories, Tang poems, animal clues, counting, colors, sounds, movement, and comfort.
 - Private on-disk TTS caching and background warmup for common reviewed replies.
+- Progressive CosyVoice PCM playback for uncached child-facing replies, with complete-audio fallback.
 
 ## Interaction Model
 
@@ -261,6 +262,7 @@ GET  /api/events?limit=50
 GET  /api/recordings/<trace_id>
 POST /api/chat   {"text":"豆豆讲故事"}
 POST /api/speech {"text":"汪，豆豆醒啦"}
+POST /api/speech-stream {"text":"豆豆今天很开心"}
 POST /api/voice  multipart/form-data audio=<recording>
 ```
 
@@ -273,6 +275,8 @@ X-Pupbox-Access-Token: <token>
 ```
 
 Browser requests also send an optional `X-Pupbox-Session-ID` header. It is an anonymous conversation identifier, not an authentication credential, and is only retained in server memory.
+
+The child page requests `/api/voice?tts=off` first so STT and the reply are available without waiting for a complete audio file. It then calls `/api/speech-stream`, which relays official DashScope SSE PCM chunks as NDJSON and schedules them through Web Audio. Cached replies and providers without streaming support use one complete audio event instead. The parent page keeps the original single-response API for diagnostics.
 
 `POST /api/chat` synthesizes TTS in OpenAI mode unless `tts=off` is set:
 

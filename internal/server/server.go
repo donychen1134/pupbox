@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -80,6 +81,11 @@ type VoiceProvider interface {
 	Speak(ctx context.Context, text string) ([]byte, string, error)
 }
 
+type StreamingVoiceProvider interface {
+	StreamSampleRate() int
+	StreamSpeak(ctx context.Context, text string, onChunk func([]byte) error) (string, int, error)
+}
+
 type Config struct {
 	Chat             ChatProvider
 	Voice            VoiceProvider
@@ -150,6 +156,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/recordings/", s.requireAccess(s.handleRecording))
 	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
 	s.mux.HandleFunc("POST /api/speech", s.requireAccess(s.handleSpeech))
+	s.mux.HandleFunc("POST /api/speech-stream", s.requireAccess(s.handleSpeechStream))
 	s.mux.HandleFunc("POST /api/voice", s.requireAccess(s.handleVoice))
 	s.mux.HandleFunc("/", s.handleStatic)
 }
@@ -217,6 +224,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tts_voice":         s.modelName("voice"),
 		"tts_format":        s.modelName("format"),
 		"tts_speed":         s.ttsSpeed(),
+		"tts_streaming":     s.streamingVoiceAvailable(),
 		"server_time":       time.Now().Format(time.RFC3339),
 	})
 }
@@ -331,6 +339,119 @@ func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(err),
 		Timings:     timings,
 	})
+}
+
+func (s *Server) handleSpeechStream(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	var req speechRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	text := dog.ClampReply(strings.TrimSpace(req.Text), 90)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+	if !s.useVoice {
+		writeError(w, http.StatusServiceUnavailable, "server voice mode is not enabled")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	encoder := json.NewEncoder(w)
+	writeEvent := func(event speechStreamEvent) error {
+		if err := encoder.Encode(event); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	if audio, mime, cache, ok := s.cachedSpeechForStream(text); ok {
+		firstAudioMS := elapsedMS(started)
+		if err := writeEvent(speechStreamEvent{
+			Type:        "audio",
+			AudioBase64: encodeAudio(audio),
+			AudioMIME:   mime,
+			SampleRate:  cache.sampleRate,
+			Cache:       cache.kind,
+		}); err != nil {
+			return
+		}
+		_ = writeEvent(speechStreamEvent{
+			Type:  "done",
+			Cache: cache.kind,
+			Timings: &TimingStats{
+				TotalMS:         elapsedMS(started),
+				TTSMS:           elapsedMS(started),
+				TTSFirstAudioMS: firstAudioMS,
+			},
+		})
+		return
+	}
+
+	streaming, ok := s.voice.(StreamingVoiceProvider)
+	if !ok {
+		s.writeCompleteSpeechFallback(r.Context(), text, started, writeEvent)
+		return
+	}
+
+	streamKey := s.streamSpeechCacheKey(text, streaming.StreamSampleRate())
+	var audio bytes.Buffer
+	cacheable := true
+	firstAudioMS := int64(-1)
+	mime, sampleRate, err := streaming.StreamSpeak(r.Context(), text, func(chunk []byte) error {
+		if firstAudioMS < 0 {
+			firstAudioMS = elapsedMS(started)
+		}
+		if cacheable && audio.Len()+len(chunk) <= maxCachedSpeechBytes {
+			_, _ = audio.Write(chunk)
+		} else {
+			cacheable = false
+		}
+		return writeEvent(speechStreamEvent{
+			Type:        "audio",
+			AudioBase64: encodeAudio(chunk),
+			AudioMIME:   "audio/pcm",
+			SampleRate:  streaming.StreamSampleRate(),
+			Cache:       "miss",
+		})
+	})
+	if err != nil {
+		if firstAudioMS < 0 {
+			s.log.Warn("streaming speech failed before audio", "error", err)
+			s.writeCompleteSpeechFallback(r.Context(), text, started, writeEvent)
+			return
+		}
+		s.log.Warn("streaming speech failed after audio", "error", err)
+		_ = writeEvent(speechStreamEvent{Type: "error", Error: "streaming speech ended early"})
+		return
+	}
+	if mime == "" {
+		mime = "audio/pcm"
+	}
+	if sampleRate <= 0 {
+		sampleRate = streaming.StreamSampleRate()
+	}
+	if cacheable && audio.Len() > 0 {
+		if cacheErr := s.speechDisk.Put(streamKey, mime, audio.Bytes()); cacheErr != nil {
+			s.log.Warn("failed to write streaming speech cache", "error", cacheErr)
+		}
+	}
+	timings := TimingStats{
+		TotalMS:         elapsedMS(started),
+		TTSMS:           elapsedMS(started),
+		TTSFirstAudioMS: firstAudioMS,
+	}
+	_ = writeEvent(speechStreamEvent{Type: "done", Cache: "miss", Timings: &timings})
 }
 
 func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +674,81 @@ func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, str
 	return audio, mime, err
 }
 
+type speechStreamCache struct {
+	kind       string
+	sampleRate int
+}
+
+func (s *Server) cachedSpeechForStream(text string) ([]byte, string, speechStreamCache, bool) {
+	key := s.speechCacheKey(text)
+	s.speechMu.Lock()
+	if cached, ok := s.speechCache[key]; ok {
+		audio := append([]byte(nil), cached.audio...)
+		s.speechMu.Unlock()
+		return audio, cached.mime, speechStreamCache{kind: "complete"}, true
+	}
+	s.speechMu.Unlock()
+
+	if audio, mime, ok, err := s.speechDisk.Get(key); ok {
+		s.speechMu.Lock()
+		if len(s.speechCache) >= maxSpeechCacheEntries {
+			for cachedKey := range s.speechCache {
+				delete(s.speechCache, cachedKey)
+				break
+			}
+		}
+		s.speechCache[key] = cachedSpeech{audio: append([]byte(nil), audio...), mime: mime}
+		s.speechMu.Unlock()
+		return audio, mime, speechStreamCache{kind: "complete"}, true
+	} else if err != nil {
+		s.log.Warn("failed to read complete speech cache for stream", "error", err)
+	}
+
+	streaming, ok := s.voice.(StreamingVoiceProvider)
+	if !ok {
+		return nil, "", speechStreamCache{}, false
+	}
+	sampleRate := streaming.StreamSampleRate()
+	streamKey := s.streamSpeechCacheKey(text, sampleRate)
+	if audio, mime, ok, err := s.speechDisk.Get(streamKey); ok {
+		return audio, mime, speechStreamCache{kind: "stream", sampleRate: sampleRate}, true
+	} else if err != nil {
+		s.log.Warn("failed to read streaming speech cache", "error", err)
+	}
+	return nil, "", speechStreamCache{}, false
+}
+
+func (s *Server) writeCompleteSpeechFallback(
+	ctx context.Context,
+	text string,
+	started time.Time,
+	writeEvent func(speechStreamEvent) error,
+) {
+	audio, mime, err := s.synthesizeSpeech(ctx, text)
+	if err != nil {
+		_ = writeEvent(speechStreamEvent{Type: "error", Error: "speech synthesis failed"})
+		return
+	}
+	firstAudioMS := elapsedMS(started)
+	if err := writeEvent(speechStreamEvent{
+		Type:        "audio",
+		AudioBase64: encodeAudio(audio),
+		AudioMIME:   mime,
+		Cache:       "fallback",
+	}); err != nil {
+		return
+	}
+	_ = writeEvent(speechStreamEvent{
+		Type:  "done",
+		Cache: "fallback",
+		Timings: &TimingStats{
+			TotalMS:         elapsedMS(started),
+			TTSMS:           elapsedMS(started),
+			TTSFirstAudioMS: firstAudioMS,
+		},
+	})
+}
+
 func (s *Server) completeSpeechCall(key string, call *speechCall, audio []byte, mime string, err error) {
 	s.speechMu.Lock()
 	if err == nil {
@@ -581,6 +777,18 @@ func (s *Server) speechCacheKey(text string) string {
 		strconv.FormatFloat(s.ttsSpeed(), 'f', 3, 64),
 		text,
 	}, "\x00")
+}
+
+func (s *Server) streamSpeechCacheKey(text string, sampleRate int) string {
+	return s.speechCacheKey(text) + "\x00stream-pcm\x00" + strconv.Itoa(sampleRate)
+}
+
+func (s *Server) streamingVoiceAvailable() bool {
+	if !s.useVoice {
+		return false
+	}
+	_, ok := s.voice.(StreamingVoiceProvider)
+	return ok
 }
 
 func (s *Server) PrewarmSpeech(ctx context.Context, texts []string) {
@@ -752,6 +960,16 @@ type speechResponse struct {
 	Timings     TimingStats `json:"timings"`
 }
 
+type speechStreamEvent struct {
+	Type        string       `json:"type"`
+	AudioBase64 string       `json:"audio_base64,omitempty"`
+	AudioMIME   string       `json:"audio_mime,omitempty"`
+	SampleRate  int          `json:"sample_rate,omitempty"`
+	Cache       string       `json:"cache,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	Timings     *TimingStats `json:"timings,omitempty"`
+}
+
 type chatResponse struct {
 	TraceID     string           `json:"trace_id,omitempty"`
 	Transcript  string           `json:"transcript"`
@@ -772,6 +990,7 @@ type TimingStats struct {
 	STTMS           int64   `json:"stt_ms"`
 	ReplyMS         int64   `json:"reply_ms"`
 	TTSMS           int64   `json:"tts_ms"`
+	TTSFirstAudioMS int64   `json:"tts_first_audio_ms,omitempty"`
 	AudioBytes      int64   `json:"audio_bytes,omitempty"`
 	AudioDurationMS int64   `json:"audio_duration_ms,omitempty"`
 	AudioPeak       float64 `json:"audio_peak,omitempty"`

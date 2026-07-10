@@ -1,6 +1,7 @@
 package dashscopeapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -105,6 +106,10 @@ func (c *Client) TTSFormat() string {
 
 func (c *Client) TTSSpeed() float64 {
 	return c.ttsSpeed
+}
+
+func (c *Client) StreamSampleRate() int {
+	return c.sampleRate
 }
 
 func (c *Client) CreateResponse(ctx context.Context, instructions, input string) (string, error) {
@@ -237,24 +242,8 @@ func (c *Client) Speak(ctx context.Context, text string) ([]byte, string, error)
 		return nil, "", errors.New("empty speech text")
 	}
 
-	input := map[string]any{
-		"text":        text,
-		"voice":       c.ttsVoice,
-		"format":      c.ttsFormat,
-		"sample_rate": c.sampleRate,
-		"rate":        c.ttsSpeed,
-	}
-	if strings.TrimSpace(c.ttsPrompt) != "" {
-		input["instruction"] = c.ttsPrompt
-	}
-
-	payload := map[string]any{
-		"model": c.ttsModel,
-		"input": input,
-	}
-
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+	if err := json.NewEncoder(&body).Encode(c.speechPayload(text, c.ttsFormat)); err != nil {
 		return nil, "", err
 	}
 
@@ -296,6 +285,102 @@ func (c *Client) Speak(ctx context.Context, text string) ([]byte, string, error)
 		return nil, "", err
 	}
 	return audio, audioMIME(c.ttsFormat), nil
+}
+
+func (c *Client) StreamSpeak(ctx context.Context, text string, onChunk func([]byte) error) (string, int, error) {
+	if !c.Available() {
+		return "", 0, errors.New("dashscope api key is not configured")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", 0, errors.New("empty speech text")
+	}
+	if onChunk == nil {
+		return "", 0, errors.New("speech stream callback is required")
+	}
+
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(c.speechPayload(text, "pcm")); err != nil {
+		return "", 0, err
+	}
+	req, err := c.newJSONRequest(ctx, "/api/v1/services/audio/tts/SpeechSynthesizer", &body)
+	if err != nil {
+		return "", 0, err
+	}
+	req.Header.Set("X-DashScope-SSE", "enable")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return "", 0, fmt.Errorf("dashscope streaming speech api returned %s: %s", resp.Status, string(data))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 2<<20)
+	chunks := 0
+	finished := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if line == "" || line == "[DONE]" {
+			continue
+		}
+		var event streamSpeechResponse
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return "", 0, fmt.Errorf("decode dashscope speech stream: %w", err)
+		}
+		if event.Output.FinishReason == "stop" {
+			finished = true
+		}
+		if event.Output.Audio.Data == "" {
+			continue
+		}
+		audio, err := base64.StdEncoding.DecodeString(event.Output.Audio.Data)
+		if err != nil {
+			return "", 0, fmt.Errorf("decode dashscope speech audio: %w", err)
+		}
+		if len(audio) == 0 {
+			continue
+		}
+		if err := onChunk(audio); err != nil {
+			return "", 0, err
+		}
+		chunks++
+	}
+	if err := scanner.Err(); err != nil {
+		return "", 0, err
+	}
+	if chunks == 0 {
+		return "", 0, errors.New("dashscope streaming speech returned no audio")
+	}
+	if !finished {
+		return "", 0, errors.New("dashscope streaming speech ended before completion")
+	}
+	return "audio/pcm", c.sampleRate, nil
+}
+
+func (c *Client) speechPayload(text, format string) map[string]any {
+	input := map[string]any{
+		"text":        text,
+		"voice":       c.ttsVoice,
+		"format":      format,
+		"sample_rate": c.sampleRate,
+		"rate":        c.ttsSpeed,
+	}
+	if c.ttsPrompt != "" {
+		input["instruction"] = c.ttsPrompt
+	}
+	return map[string]any{
+		"model": c.ttsModel,
+		"input": input,
+	}
 }
 
 func (c *Client) downloadAudio(ctx context.Context, url string) ([]byte, error) {
@@ -344,6 +429,15 @@ type speechResponse struct {
 		Audio struct {
 			Data string `json:"data"`
 			URL  string `json:"url"`
+		} `json:"audio"`
+	} `json:"output"`
+}
+
+type streamSpeechResponse struct {
+	Output struct {
+		FinishReason string `json:"finish_reason"`
+		Audio        struct {
+			Data string `json:"data"`
 		} `json:"audio"`
 	} `json:"output"`
 }

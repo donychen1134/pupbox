@@ -1,6 +1,15 @@
 package dashscopeapi
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestConfigDefaults(t *testing.T) {
 	t.Parallel()
@@ -80,5 +89,80 @@ func TestNormalizeAudioMIME(t *testing.T) {
 	}
 	if got, want := normalizeAudioMIME("recording.bin", "audio/webm;codecs=opus"), "audio/webm"; got != want {
 		t.Fatalf("normalizeAudioMIME(content type) = %q, want %q", got, want)
+	}
+}
+
+func TestStreamSpeakParsesSSEAudioChunks(t *testing.T) {
+	t.Parallel()
+
+	chunks := [][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/services/audio/tts/SpeechSynthesizer" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("authorization header = %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("X-DashScope-SSE") != "enable" {
+			t.Errorf("SSE header = %q", r.Header.Get("X-DashScope-SSE"))
+		}
+		var payload struct {
+			Input struct {
+				Format string `json:"format"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		if payload.Input.Format != "pcm" {
+			t.Errorf("format = %q, want pcm", payload.Input.Format)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range chunks {
+			_, _ = w.Write([]byte("event: result\n"))
+			_, _ = w.Write([]byte(`data: {"output":{"type":"sentence-synthesis","audio":{"data":"` + base64.StdEncoding.EncodeToString(chunk) + `"}}}` + "\n\n"))
+		}
+		_, _ = w.Write([]byte(`data: {"output":{"finish_reason":"stop","audio":{"data":""}}}` + "\n\n"))
+	}))
+	defer upstream.Close()
+
+	client := New(Config{APIKey: "test-key", BaseURL: upstream.URL, SampleRate: "24000"})
+	var got bytes.Buffer
+	mime, sampleRate, err := client.StreamSpeak(context.Background(), "豆豆说话", func(chunk []byte) error {
+		_, writeErr := got.Write(chunk)
+		return writeErr
+	})
+	if err != nil {
+		t.Fatalf("StreamSpeak: %v", err)
+	}
+	if mime != "audio/pcm" || sampleRate != 24000 {
+		t.Fatalf("stream format = (%q, %d)", mime, sampleRate)
+	}
+	if want := bytes.Join(chunks, nil); !bytes.Equal(got.Bytes(), want) {
+		t.Fatalf("audio = %v, want %v", got.Bytes(), want)
+	}
+}
+
+func TestStreamSpeakRejectsTruncatedSSE(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		chunk := base64.StdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+		_, _ = w.Write([]byte(`data: {"output":{"type":"sentence-synthesis","audio":{"data":"` + chunk + `"}}}` + "\n\n"))
+	}))
+	defer upstream.Close()
+
+	client := New(Config{APIKey: "test-key", BaseURL: upstream.URL, SampleRate: "24000"})
+	var got bytes.Buffer
+	_, _, err := client.StreamSpeak(context.Background(), "豆豆说话", func(chunk []byte) error {
+		_, writeErr := got.Write(chunk)
+		return writeErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "ended before completion") {
+		t.Fatalf("StreamSpeak error = %v, want incomplete stream error", err)
+	}
+	if got.Len() == 0 {
+		t.Fatal("expected the partial chunk to reach the playback callback")
 	}
 }
