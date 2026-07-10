@@ -284,6 +284,57 @@ func TestChatUsesRecentSessionContext(t *testing.T) {
 	}
 }
 
+func TestChatRoutesNaturalConversationToModel(t *testing.T) {
+	chat := &capturingChatProvider{}
+	srv := New(Config{Chat: chat})
+
+	for _, text := range []string{
+		"豆豆，你今天开心吗",
+		"我想玩积木",
+		"我画了一辆红色汽车",
+		"妈妈今天回家了",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/chat?tts=off", strings.NewReader(`{"text":"`+text+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("chat status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var response chatResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if response.Source != "test-chat" || response.Activity != nil {
+			t.Errorf("chat %q routed to source=%q activity=%#v, want test-chat", text, response.Source, response.Activity)
+		}
+	}
+
+	if inputs := chat.Inputs(); len(inputs) != 4 {
+		t.Fatalf("model inputs = %d, want 4", len(inputs))
+	}
+}
+
+func TestChatKeepsExplicitActivityOutOfModel(t *testing.T) {
+	chat := &capturingChatProvider{}
+	srv := New(Config{Chat: chat})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat?tts=off", strings.NewReader(`{"text":"豆豆，讲个故事"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+
+	var response chatResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Source != "activity:story" || response.Activity == nil || response.Activity.ID != "story" {
+		t.Fatalf("source=%q activity=%#v, want story activity", response.Source, response.Activity)
+	}
+	if inputs := chat.Inputs(); len(inputs) != 0 {
+		t.Fatalf("model inputs = %d, want 0", len(inputs))
+	}
+}
+
 type capturingChatProvider struct {
 	mu     sync.Mutex
 	inputs []string

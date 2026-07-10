@@ -234,7 +234,7 @@ To use OpenAI for non-deterministic replies while keeping DashScope STT/TTS:
 make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai
 ```
 
-Pupbox still uses deterministic activity routing before Qwen. That means safety rules and known toddler workflows, such as `讲故事`, `数数`, `猜动物`, `插座`, `嗯嗯`, and `汪汪`, are handled by local code first. Qwen is only called when no local rule or activity matches.
+Pupbox uses high-confidence deterministic routing before Qwen. Safety rules and explicit toddler workflows, such as `讲故事`, `数数`, `猜动物`, `插座`, `嗯嗯`, and `汪汪`, are handled by local code first. Leading calls such as `豆豆` and `小狗小狗` are treated as forms of address rather than activity commands; ordinary conversation, including sentences containing broad words such as `玩`, `妈妈`, or a color, falls through to Qwen.
 
 The default TTS combination is `cosyvoice-v3-flash + longhuhu_v3` because it was verified against the live DashScope API. `cosyvoice-v3.5-flash` is supported as a configurable model, but the currently tested `longhuhu_v3` and `longxiaochun` voices returned engine error `418` with that model, so it is not the default yet.
 

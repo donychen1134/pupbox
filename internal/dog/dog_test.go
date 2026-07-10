@@ -30,6 +30,13 @@ func TestPlanActivityStory(t *testing.T) {
 	}
 }
 
+func TestPlanActivityStripsDogAddressForExplicitCommands(t *testing.T) {
+	got, ok := PlanActivity("小狗小狗，给我讲故事")
+	if !ok || got.ID != "story" {
+		t.Fatalf("expected story activity after dog address, got %#v ok=%v", got, ok)
+	}
+}
+
 func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 	tests := []struct {
 		text string
@@ -46,6 +53,41 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		got, ok := PlanActivity(tt.text)
 		if !ok || got.ID != tt.id {
 			t.Fatalf("PlanActivity(%q) = %#v ok=%v, want %s", tt.text, got, ok, tt.id)
+		}
+	}
+}
+
+func TestPlanActivityLeavesNaturalConversationForModel(t *testing.T) {
+	for _, text := range []string{
+		"豆豆，你今天开心吗",
+		"我想玩积木",
+		"我画了一辆红色汽车",
+		"妈妈今天回家了",
+		"我写了一首诗",
+		"你好豆豆",
+	} {
+		if activity, ok := PlanActivity(text); ok {
+			t.Errorf("PlanActivity(%q) = %#v, want model routing", text, activity)
+		}
+	}
+}
+
+func TestPlanActivityKeepsHighConfidenceLocalRoutes(t *testing.T) {
+	tests := []struct {
+		text string
+		id   string
+	}{
+		{text: "豆豆背唐诗", id: "poem"},
+		{text: "我们来猜动物", id: "animal_guess"},
+		{text: "一起数数", id: "counting"},
+		{text: "找蓝色", id: "color_hunt"},
+		{text: "我有点害怕", id: "comfort"},
+		{text: "我们拍拍手", id: "clap"},
+	}
+	for _, tt := range tests {
+		activity, ok := PlanActivity(tt.text)
+		if !ok || activity.ID != tt.id {
+			t.Errorf("PlanActivity(%q) = %#v ok=%v, want %s", tt.text, activity, ok, tt.id)
 		}
 	}
 }

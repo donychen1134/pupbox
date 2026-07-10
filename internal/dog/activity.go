@@ -101,30 +101,61 @@ func PlanActivity(text string) (Activity, bool) {
 	if t == "" {
 		return Activity{}, false
 	}
-	normalized := normalizeToddlerIntentText(t)
+	normalized := stripDogAddress(normalizeToddlerIntentText(t))
+	if normalized == "" {
+		return Activity{}, false
+	}
 
 	switch {
-	case containsAny(normalized, "唐诗", "古诗", "背诗", "诗"):
+	case containsAny(normalized, "背唐诗", "背古诗", "念唐诗", "念古诗", "读唐诗", "读古诗", "来首唐诗", "来一首唐诗") ||
+		equalsAny(normalized, "唐诗", "古诗", "背诗"):
 		return byID("poem")
-	case containsAny(normalized, "故事", "讲故事", "讲个故事", "听故事", "小狗故事", "古事", "古是", "鼓事", "故是"):
+	case containsAny(normalized, "讲故事", "讲个故事", "听故事", "说故事", "小狗故事", "再讲一个故事", "讲个古事", "讲个古是", "讲个鼓事", "讲个故是") ||
+		equalsAny(normalized, "故事", "古事", "古是", "鼓事", "故是"):
 		return byID("story")
-	case containsAny(normalized, "动物", "小动物", "猜动物", "猜谜", "谜语", "猜"):
+	case containsAny(normalized, "猜动物", "猜小动物", "动物游戏", "猜谜语", "猜个谜") ||
+		equalsAny(normalized, "动物", "小动物", "猜谜", "谜语"):
 		return byID("animal_guess")
-	case containsAny(normalized, "数数", "数一数", "数字", "一二三", "123", "数"):
+	case containsAny(normalized, "数数", "数一数", "一起数", "数数字") ||
+		equalsAny(normalized, "数字", "一二三", "123"):
 		return byID("counting")
-	case containsAny(normalized, "唱歌", "唱一个", "唱首歌", "音乐", "声音游戏", "学声音"):
+	case containsAny(normalized, "唱歌", "唱一个", "唱首歌", "声音游戏", "学声音") ||
+		equalsAny(normalized, "音乐", "声音"):
 		return byID("sound_game")
-	case containsAny(normalized, "颜色", "找颜色", "找红色", "红色", "蓝色", "黄色", "绿色"):
+	case containsAny(normalized, "玩颜色", "找颜色", "找红色", "找蓝色", "找黄色", "找绿色") ||
+		equalsAny(normalized, "颜色", "红色", "蓝色", "黄色", "绿色"):
 		return byID("color_hunt")
-	case containsAny(normalized, "害怕", "怕", "想妈妈", "想爸爸", "妈妈", "爸爸", "哭", "抱抱"):
+	case containsAny(normalized, "害怕", "我怕", "好怕", "想妈妈", "想爸爸", "哭了", "我哭", "抱抱"):
 		return byID("comfort")
 	case LooksLikeToddlerBabble(normalized):
 		return babbleActivity(), true
-	case containsAny(normalized, "你好", "豆豆", "小狗", "狗狗", "汪汪", "旺旺", "玩", "拍拍", "拍手"):
+	case containsAny(normalized, "拍拍手", "一起拍手", "玩拍拍", "拍两下") ||
+		equalsAny(normalized, "拍拍", "拍手", "汪汪", "旺旺"):
 		return byID("clap")
 	default:
 		return Activity{}, false
 	}
+}
+
+func stripDogAddress(text string) string {
+	for {
+		original := text
+		for _, prefix := range []string{"小狗小狗", "豆豆", "小狗", "狗狗"} {
+			text = strings.TrimPrefix(text, prefix)
+		}
+		if text == original {
+			return text
+		}
+	}
+}
+
+func equalsAny(text string, values ...string) bool {
+	for _, value := range values {
+		if text == value {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeToddlerIntentText(text string) string {
