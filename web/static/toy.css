@@ -236,7 +236,6 @@ h1 {
 }
 
 .paw-button:active,
-.paw-button.is-pressed,
 body.listening .paw-button {
   transform: translateY(10px);
   box-shadow: 0 2px 0 var(--line);

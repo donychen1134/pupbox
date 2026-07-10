@@ -28,7 +28,7 @@ The child-facing flow is intentionally simple:
 2. Release to send.
 3. Listen to the local waiting melody and the reply.
 
-Short taps and cancelled gestures are ignored instead of being uploaded. The separate wake tap was removed because children naturally started speaking during the first press.
+The child page uses the same direct pointer-down/pointer-up recording path as the parent page. Recordings shorter than about 260 ms are rejected locally. The separate wake tap was removed because children naturally started speaking during the first press.
 
 The model should not depend on the child giving complete answers. Inputs like `嗯嗯`, `啊呀`, and `汪汪` are treated as valid interaction signals and routed to simple activities such as clapping, counting, or comfort.
 
@@ -325,7 +325,7 @@ Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html
 
 1. Confirm the diagnostics page shows the expected provider, voice, and speed, and the child page says `在线`.
 2. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should acknowledge immediately with a local melody and still respond with a simple activity.
-3. Tap quickly without speaking. The page should ask for a longer press without sending a request.
+3. Tap quickly without speaking. The page should reject the short recording without sending it to STT.
 4. Say `豆豆讲故事` several times. The stories should rotate and remain short enough to finish before the child loses attention.
 5. Say `豆豆猜动物`, answer the clue, and check whether the next reply follows the context.
 6. Say `我想玩插座`. The dog should route to a caregiver safety reply.

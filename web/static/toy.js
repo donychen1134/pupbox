@@ -1,22 +1,17 @@
 const SILENT_WAV_DATA_URI = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==";
-const MIN_RECORDING_MS = 380;
 const MAX_RECORDING_MS = 12000;
 
 const state = {
   recorder: null,
   recognition: null,
   recording: false,
-  startingMic: false,
-  pressCancelled: false,
   speechText: "",
   speechSent: false,
   health: null,
-  spaceDown: false,
   feedbackContext: null,
   thinkingTimer: null,
   thinkingNodes: new Set(),
   accessToken: "",
-  activePointerId: null,
   recordingStartedAt: 0,
   recordingTimer: null,
   audioPlayer: null,
@@ -45,30 +40,11 @@ async function init() {
 }
 
 function bindEvents() {
-  els.recordButton.addEventListener("pointerdown", startPress);
-  els.recordButton.addEventListener("pointerup", stopPress);
-  els.recordButton.addEventListener("pointercancel", cancelPress);
-  els.recordButton.addEventListener("lostpointercapture", clearPointerPress);
-  els.recordButton.addEventListener("contextmenu", blockButtonDefault);
-  els.recordButton.addEventListener("selectstart", blockButtonDefault);
-  els.recordButton.addEventListener("dragstart", blockButtonDefault);
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) cancelPress();
-  });
-
-  window.addEventListener("keydown", (event) => {
-    if (event.code !== "Space" || state.spaceDown) return;
-    event.preventDefault();
-    state.spaceDown = true;
-    setButtonPressed(true);
-    startPress(event);
-  });
-  window.addEventListener("keyup", (event) => {
-    if (event.code !== "Space") return;
-    event.preventDefault();
-    state.spaceDown = false;
-    setButtonPressed(false);
-    stopPress();
+  els.recordButton.addEventListener("pointerdown", startRecording);
+  els.recordButton.addEventListener("pointerup", stopRecording);
+  els.recordButton.addEventListener("pointercancel", stopRecording);
+  els.recordButton.addEventListener("pointerleave", () => {
+    if (state.recording) stopRecording();
   });
 }
 
@@ -96,19 +72,11 @@ async function loadHealth() {
   }
 }
 
-async function startPress(event) {
-  event?.preventDefault?.();
-  if (state.busy || state.startingMic) return;
+async function startRecording(event) {
+  event.preventDefault();
+  if (state.busy || state.recording) return;
   unlockAudioPlayback();
   unlockFeedbackAudio();
-  if (event?.pointerId !== undefined) {
-    if (!event.isPrimary || state.activePointerId !== null) return;
-    state.activePointerId = event.pointerId;
-    safeSetPointerCapture(event.pointerId);
-  }
-  state.pressCancelled = false;
-  setButtonPressed(true);
-  if (state.recording) return;
 
   if (shouldUseBrowserSpeech()) {
     startBrowserSpeech(event);
@@ -125,52 +93,23 @@ async function startPress(event) {
     return;
   }
 
-  let stream = null;
   try {
-    state.startingMic = true;
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    state.startingMic = false;
-    if (!isPressActive()) {
-      stream.getTracks().forEach((track) => track.stop());
-      if (state.pressCancelled) {
-        setPhase("idle", "按住小爪子说话", "按住说话");
-      } else {
-        setPhase("idle", "再按住说话", "按住说话");
-        playCue("short");
-      }
-      return;
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const recorder = await createWavRecorder(stream);
     state.recorder = recorder;
     state.recording = true;
     startRecordingMeter(recorder);
     setPhase("listening", "豆豆听着呢", "松开发送");
     playCue("listening");
+    els.recordButton.setPointerCapture?.(event.pointerId);
   } catch (error) {
-    state.startingMic = false;
-    stream?.getTracks().forEach((track) => track.stop());
+    state.recording = false;
     stopRecordingMeter();
-    if (state.pressCancelled) {
-      setPhase("idle", "按住小爪子说话", "按住说话");
-      return;
-    }
     await speakStatus("豆豆没有听清。再试一次吧。", "没有听清");
   }
 }
 
-function stopPress(event) {
-  event?.preventDefault?.();
-  if (event?.pointerId !== undefined && state.activePointerId !== event.pointerId) return;
-  releasePointer(event);
-  setButtonPressed(false);
-
+function stopRecording() {
   if (state.recognition) {
     state.recording = false;
     stopRecordingMeter();
@@ -179,51 +118,15 @@ function stopPress(event) {
     return;
   }
 
-  if (!state.recording || !state.recorder) {
-    if (state.startingMic) {
-      setPhase("idle", "麦克风准备中", "请稍等");
-      return;
-    }
-    if (!state.busy) {
-      setPhase("idle", "按住久一点", "按住说话");
-      playCue("short");
-    }
-    return;
-  }
+  if (!state.recording || !state.recorder) return;
   const recorder = state.recorder;
   state.recorder = null;
   state.recording = false;
   stopRecordingMeter();
   setPhase("thinking", "豆豆听到啦", "想一想");
   recorder.stop().then((recording) => {
-    if (recording.durationMs < MIN_RECORDING_MS) {
-      setPhase("idle", "按住久一点", "按住说话");
-      playCue("short");
-      return;
-    }
     sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs, recording.peakLevel);
   }).catch(() => speakStatus("豆豆没有听清。再试一次吧。", "没有听清"));
-}
-
-function cancelPress(event) {
-  event?.preventDefault?.();
-  if (event?.pointerId !== undefined && state.activePointerId !== event.pointerId) return;
-  releasePointer(event);
-  state.pressCancelled = true;
-  setButtonPressed(false);
-  if (state.recognition) {
-    state.speechSent = true;
-    state.recognition.abort?.();
-    cleanupSpeech();
-  }
-  if (state.recorder) {
-    const recorder = state.recorder;
-    state.recorder = null;
-    state.recording = false;
-    recorder.stop().catch(() => {});
-  }
-  stopRecordingMeter();
-  if (!state.busy) setPhase("idle", "按住小爪子说话", "按住说话");
 }
 
 function startBrowserSpeech(event) {
@@ -242,6 +145,7 @@ function startBrowserSpeech(event) {
   state.recording = true;
   setPhase("listening", "豆豆听着呢", "松开发送");
   playCue("listening");
+  els.recordButton.setPointerCapture?.(event.pointerId);
 
   recognition.addEventListener("result", (resultEvent) => {
     for (let i = resultEvent.resultIndex; i < resultEvent.results.length; i += 1) {
@@ -280,38 +184,6 @@ function cleanupSpeech() {
   stopRecordingMeter();
 }
 
-function releasePointer(event) {
-  if (event?.pointerId !== undefined) {
-    safeReleasePointerCapture(event.pointerId);
-  }
-  state.activePointerId = null;
-}
-
-function safeSetPointerCapture(pointerId) {
-  try {
-    els.recordButton.setPointerCapture?.(pointerId);
-  } catch (error) {
-    // Synthetic tests and some cancelled browser gestures can lack an active pointer.
-  }
-}
-
-function safeReleasePointerCapture(pointerId) {
-  try {
-    els.recordButton.releasePointerCapture?.(pointerId);
-  } catch (error) {
-    // Ignore when the browser has already released capture.
-  }
-}
-
-function clearPointerPress() {
-  state.activePointerId = null;
-  setButtonPressed(false);
-}
-
-function setButtonPressed(pressed) {
-  els.recordButton.classList.toggle("is-pressed", pressed);
-}
-
 function startRecordingMeter(recorder) {
   stopRecordingMeter();
   state.recordingStartedAt = Date.now();
@@ -322,7 +194,7 @@ function startRecordingMeter(recorder) {
 function updateRecordingMeter(recorder) {
   const durationMS = Date.now() - state.recordingStartedAt;
   if (durationMS >= MAX_RECORDING_MS) {
-    stopPress();
+    stopRecording();
     return;
   }
   const seconds = Math.max(0, durationMS / 1000);
@@ -346,14 +218,6 @@ function stopRecordingMeter() {
   document.body.style.setProperty("--voice-level", "0");
 }
 
-function isPressActive() {
-  return state.activePointerId !== null || state.spaceDown;
-}
-
-function blockButtonDefault(event) {
-  event.preventDefault();
-}
-
 async function sendRecognizedText(text) {
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
@@ -369,6 +233,10 @@ async function sendRecognizedText(text) {
 
 async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
   if (!blob || blob.size === 0) return;
+  if (durationMs && durationMs < 260) {
+    await speakStatus("豆豆没有听清。再说长一点点。", "没有听清");
+    return;
+  }
   const form = new FormData();
   form.append("audio", blob, filename || "recording.wav");
   if (durationMs) form.append("duration_ms", String(durationMs));
@@ -718,7 +586,6 @@ function playCue(kind) {
   if (!context) return;
   const patterns = {
     listening: [[440, 0, 0.08, 0.035], [659.25, 0.09, 0.12, 0.04]],
-    short: [[392, 0, 0.09, 0.025], [329.63, 0.1, 0.12, 0.022]],
   };
   for (const tone of patterns[kind] || []) playTone(context, ...tone, false);
 }
