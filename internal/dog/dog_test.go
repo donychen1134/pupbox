@@ -13,6 +13,15 @@ func TestCheckSafetyDanger(t *testing.T) {
 	}
 }
 
+func TestInstructionsAreForDirectSpokenReplies(t *testing.T) {
+	instructions := Instructions()
+	for _, rule := range []string{"直接朗读", "不要使用括号", "先具体回应", "避免连续重复"} {
+		if !strings.Contains(instructions, rule) {
+			t.Fatalf("instructions missing %q", rule)
+		}
+	}
+}
+
 func TestMockReplyPoem(t *testing.T) {
 	got := MockReply("豆豆背唐诗")
 	for _, reply := range activityReplyVariants["poem"] {
