@@ -1,16 +1,20 @@
 const SILENT_WAV_DATA_URI = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==";
+const MIN_RECORDING_MS = 380;
 const MAX_RECORDING_MS = 12000;
 
 const state = {
   recorder: null,
   recognition: null,
   recording: false,
+  startingMic: false,
+  pressCancelled: false,
   speechText: "",
   speechSent: false,
   health: null,
-  awake: false,
   spaceDown: false,
-  thinkingSound: null,
+  feedbackContext: null,
+  thinkingTimer: null,
+  thinkingNodes: new Set(),
   accessToken: "",
   activePointerId: null,
   recordingStartedAt: 0,
@@ -43,11 +47,14 @@ async function init() {
 function bindEvents() {
   els.recordButton.addEventListener("pointerdown", startPress);
   els.recordButton.addEventListener("pointerup", stopPress);
-  els.recordButton.addEventListener("pointercancel", stopPress);
+  els.recordButton.addEventListener("pointercancel", cancelPress);
   els.recordButton.addEventListener("lostpointercapture", clearPointerPress);
   els.recordButton.addEventListener("contextmenu", blockButtonDefault);
   els.recordButton.addEventListener("selectstart", blockButtonDefault);
   els.recordButton.addEventListener("dragstart", blockButtonDefault);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) cancelPress();
+  });
 
   window.addEventListener("keydown", (event) => {
     if (event.code !== "Space" || state.spaceDown) return;
@@ -69,10 +76,9 @@ async function loadHealth() {
   try {
     const health = await fetchJSON("/api/health");
     state.health = health;
-    els.modePill.textContent = providerLabel(health.mode);
+    els.modePill.textContent = "在线";
     if (hasServerVoice()) {
-      const speed = Number(health.tts_speed || 1).toFixed(2);
-      els.voiceNote.textContent = `${providerLabel(remoteVoiceProvider())} 语音：${health.tts_voice || "voice"} / ${speed}x`;
+      els.voiceNote.textContent = "豆豆准备好啦";
     } else if (browserSpeechRecognition()) {
       els.voiceNote.textContent = "按住说话，松开发送";
     } else {
@@ -92,22 +98,17 @@ async function loadHealth() {
 
 async function startPress(event) {
   event?.preventDefault?.();
-  if (state.busy) return;
+  if (state.busy || state.startingMic) return;
   unlockAudioPlayback();
+  unlockFeedbackAudio();
   if (event?.pointerId !== undefined) {
     if (!event.isPrimary || state.activePointerId !== null) return;
     state.activePointerId = event.pointerId;
     safeSetPointerCapture(event.pointerId);
   }
+  state.pressCancelled = false;
   setButtonPressed(true);
   if (state.recording) return;
-  if (!state.awake) {
-    state.awake = true;
-    setPhase("speaking", "豆豆醒啦", "按住");
-    await speak("汪，豆豆醒啦。按住小爪子，跟豆豆说话。");
-    setPhase("idle", "豆豆在听", "按住");
-    return;
-  }
 
   if (shouldUseBrowserSpeech()) {
     startBrowserSpeech(event);
@@ -115,33 +116,52 @@ async function startPress(event) {
   }
 
   if (!hasServerVoice()) {
-    setPhase("idle", "还没连上语音", "按住");
-    await speak("豆豆还没连上语音。请让爸爸妈妈看一下设置。");
+    await speakStatus("豆豆还没连上语音。请让爸爸妈妈看一下设置。", "找爸爸妈妈");
     return;
   }
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    setPhase("idle", "不能录音", "按住");
-    await speak("这个浏览器不能录音。");
+    await speakStatus("这个浏览器不能录音。", "找爸爸妈妈");
     return;
   }
 
+  let stream = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    state.startingMic = true;
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    state.startingMic = false;
     if (!isPressActive()) {
       stream.getTracks().forEach((track) => track.stop());
-      setPhase("idle", "豆豆在这里", "按住");
+      if (state.pressCancelled) {
+        setPhase("idle", "按住小爪子说话", "按住说话");
+      } else {
+        setPhase("idle", "再按住说话", "按住说话");
+        playCue("short");
+      }
       return;
     }
     const recorder = await createWavRecorder(stream);
     state.recorder = recorder;
     state.recording = true;
     startRecordingMeter(recorder);
-    setPhase("listening", "豆豆听着呢", "松开");
+    setPhase("listening", "豆豆听着呢", "松开发送");
+    playCue("listening");
   } catch (error) {
+    state.startingMic = false;
+    stream?.getTracks().forEach((track) => track.stop());
     stopRecordingMeter();
-    setPhase("idle", "没有听清", "按住");
-    await speak("豆豆没有听清。再试一次吧。");
+    if (state.pressCancelled) {
+      setPhase("idle", "按住小爪子说话", "按住说话");
+      return;
+    }
+    await speakStatus("豆豆没有听清。再试一次吧。", "没有听清");
   }
 }
 
@@ -154,21 +174,56 @@ function stopPress(event) {
   if (state.recognition) {
     state.recording = false;
     stopRecordingMeter();
+    setPhase("thinking", "豆豆听到啦", "想一想");
     state.recognition.stop();
     return;
   }
 
-  if (!state.recording || !state.recorder) return;
+  if (!state.recording || !state.recorder) {
+    if (state.startingMic) {
+      setPhase("idle", "麦克风准备中", "请稍等");
+      return;
+    }
+    if (!state.busy) {
+      setPhase("idle", "按住久一点", "按住说话");
+      playCue("short");
+    }
+    return;
+  }
   const recorder = state.recorder;
   state.recorder = null;
   state.recording = false;
   stopRecordingMeter();
+  setPhase("thinking", "豆豆听到啦", "想一想");
   recorder.stop().then((recording) => {
+    if (recording.durationMs < MIN_RECORDING_MS) {
+      setPhase("idle", "按住久一点", "按住说话");
+      playCue("short");
+      return;
+    }
     sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs, recording.peakLevel);
-  }).catch(async () => {
-    setPhase("idle", "没有听清", "按住");
-    await speak("豆豆没有听清。再试一次吧。");
-  });
+  }).catch(() => speakStatus("豆豆没有听清。再试一次吧。", "没有听清"));
+}
+
+function cancelPress(event) {
+  event?.preventDefault?.();
+  if (event?.pointerId !== undefined && state.activePointerId !== event.pointerId) return;
+  releasePointer(event);
+  state.pressCancelled = true;
+  setButtonPressed(false);
+  if (state.recognition) {
+    state.speechSent = true;
+    state.recognition.abort?.();
+    cleanupSpeech();
+  }
+  if (state.recorder) {
+    const recorder = state.recorder;
+    state.recorder = null;
+    state.recording = false;
+    recorder.stop().catch(() => {});
+  }
+  stopRecordingMeter();
+  if (!state.busy) setPhase("idle", "按住小爪子说话", "按住说话");
 }
 
 function startBrowserSpeech(event) {
@@ -185,7 +240,8 @@ function startBrowserSpeech(event) {
   state.speechText = "";
   state.speechSent = false;
   state.recording = true;
-  setPhase("listening", "豆豆听着呢", "松开");
+  setPhase("listening", "豆豆听着呢", "松开发送");
+  playCue("listening");
 
   recognition.addEventListener("result", (resultEvent) => {
     for (let i = resultEvent.resultIndex; i < resultEvent.results.length; i += 1) {
@@ -199,8 +255,7 @@ function startBrowserSpeech(event) {
   recognition.addEventListener("error", async () => {
     state.speechSent = true;
     cleanupSpeech();
-    setPhase("idle", "没有听清", "按住");
-    await speak("豆豆没有听清。再说一次吧。");
+    await speakStatus("豆豆没有听清。再说一次吧。", "没有听清");
   });
 
   recognition.addEventListener("end", () => {
@@ -279,7 +334,7 @@ function updateRecordingMeter(recorder) {
   } else {
     els.toyState.textContent = `豆豆听着呢 ${seconds.toFixed(1)}秒`;
   }
-  els.recordLabel.textContent = durationMS < 700 ? "说话" : "松开";
+  els.recordLabel.textContent = durationMS < 700 ? "继续说" : "松开发送";
 }
 
 function stopRecordingMeter() {
@@ -305,18 +360,15 @@ async function sendRecognizedText(text) {
     const response = await postJSON("/api/chat", { text });
     await handleDogResponse(response);
   } catch (error) {
-    setPhase("idle", "出错了", "按住");
-    await speak(error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。");
+    await speakStatus(
+      error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。",
+      error.status === 401 ? "找爸爸妈妈" : "出错了",
+    );
   }
 }
 
 async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
   if (!blob || blob.size === 0) return;
-  if (durationMs && durationMs < 260) {
-    setPhase("idle", "没有听清", "按住");
-    await speak("豆豆没有听清。再说长一点点。");
-    return;
-  }
   const form = new FormData();
   form.append("audio", blob, filename || "recording.wav");
   if (durationMs) form.append("duration_ms", String(durationMs));
@@ -329,21 +381,29 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
     const payload = await response.json();
     await handleDogResponse(payload);
   } catch (error) {
-    setPhase("idle", "出错了", "按住");
-    await speak(error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。");
+    await speakStatus(
+      error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。",
+      error.status === 401 ? "找爸爸妈妈" : "出错了",
+    );
   }
 }
 
 async function handleDogResponse(payload) {
   const reply = payload.reply || "豆豆没有想好。";
-  setPhase("speaking", payload.safety?.triggered ? "找爸爸妈妈" : actionLabel(payload), "按住");
+  setPhase("speaking", payload.safety?.triggered ? "找爸爸妈妈" : actionLabel(payload), "等一下");
   if (payload.audio_base64 && payload.audio_mime) {
     const played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
     if (!played) await speakInBrowser(reply);
   } else {
     await speak(reply);
   }
-  setPhase("idle", "豆豆在这里", "按住");
+  setPhase("idle", "按住小爪子说话", "按住说话");
+}
+
+async function speakStatus(text, stateText) {
+  setPhase("speaking", stateText, "等一下");
+  await speak(text);
+  setPhase("idle", "按住小爪子说话", "按住说话");
 }
 
 function actionLabel(payload) {
@@ -621,37 +681,59 @@ async function speakWithServerVoice(text) {
 }
 
 function startThinkingSound() {
-  if (state.thinkingSound) return;
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  const context = new AudioContext();
-  const play = () => {
-    if (state.thinkingSound?.context === context) playTonePair(context);
-  };
-  state.thinkingSound = {
-    context,
-    timer: window.setInterval(play, 1400),
-  };
-  context.resume().then(play).catch(() => {});
+  if (state.thinkingTimer) return;
+  const context = unlockFeedbackAudio();
+  if (!context) return;
+  playThinkingMotif(context);
+  state.thinkingTimer = window.setInterval(() => playThinkingMotif(context), 1800);
 }
 
 function stopThinkingSound() {
-  if (!state.thinkingSound) return;
-  window.clearInterval(state.thinkingSound.timer);
-  state.thinkingSound.context.close().catch(() => {});
-  state.thinkingSound = null;
+  if (state.thinkingTimer) {
+    window.clearInterval(state.thinkingTimer);
+    state.thinkingTimer = null;
+  }
+  for (const oscillator of state.thinkingNodes) {
+    try {
+      oscillator.stop();
+    } catch (error) {
+      // The oscillator may already have ended.
+    }
+  }
+  state.thinkingNodes.clear();
 }
 
-function playTonePair(context) {
-  playTone(context, 523.25, 0, 0.08, 0.035);
-  playTone(context, 659.25, 0.1, 0.09, 0.03);
+function unlockFeedbackAudio() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  if (!state.feedbackContext) state.feedbackContext = new AudioContext();
+  if (state.feedbackContext.state === "suspended") {
+    state.feedbackContext.resume().catch(() => {});
+  }
+  return state.feedbackContext;
 }
 
-function playTone(context, frequency, delay, duration, gainValue) {
+function playCue(kind) {
+  const context = unlockFeedbackAudio();
+  if (!context) return;
+  const patterns = {
+    listening: [[440, 0, 0.08, 0.035], [659.25, 0.09, 0.12, 0.04]],
+    short: [[392, 0, 0.09, 0.025], [329.63, 0.1, 0.12, 0.022]],
+  };
+  for (const tone of patterns[kind] || []) playTone(context, ...tone, false);
+}
+
+function playThinkingMotif(context) {
+  playTone(context, 523.25, 0, 0.14, 0.025, true);
+  playTone(context, 659.25, 0.14, 0.14, 0.023, true);
+  playTone(context, 783.99, 0.28, 0.2, 0.021, true);
+}
+
+function playTone(context, frequency, delay, duration, gainValue, thinking) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   const start = context.currentTime + delay;
-  oscillator.type = "sine";
+  oscillator.type = "triangle";
   oscillator.frequency.value = frequency;
   gain.gain.setValueAtTime(0.0001, start);
   gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.02);
@@ -660,6 +742,10 @@ function playTone(context, frequency, delay, duration, gainValue) {
   gain.connect(context.destination);
   oscillator.start(start);
   oscillator.stop(start + duration + 0.02);
+  if (thinking) {
+    state.thinkingNodes.add(oscillator);
+    oscillator.addEventListener("ended", () => state.thinkingNodes.delete(oscillator), { once: true });
+  }
 }
 
 function hasServerVoice() {
@@ -668,19 +754,6 @@ function hasServerVoice() {
 
 function remoteVoiceProvider() {
   return state.health?.voice_provider || (state.health?.mode === "openai" ? "openai" : "mock");
-}
-
-function providerLabel(provider) {
-  switch (provider) {
-    case "dashscope":
-      return "阿里云";
-    case "openai":
-      return "OpenAI";
-    case "openai-chat":
-      return "OpenAI Chat";
-    default:
-      return "Mock";
-  }
 }
 
 function speakInBrowser(text) {

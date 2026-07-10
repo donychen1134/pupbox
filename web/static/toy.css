@@ -6,6 +6,7 @@
   --coral: #ef6a55;
   --yellow: #ffd45d;
   --sky: #dff8ef;
+  --teal: #126f6a;
   --voice-level: 0;
 }
 
@@ -198,7 +199,7 @@ button {
 
 h1 {
   margin: 18px 0 0;
-  font-size: clamp(72px, 14vw, 132px);
+  font-size: 112px;
   line-height: 0.95;
   letter-spacing: 0;
 }
@@ -207,7 +208,7 @@ h1 {
   min-height: 44px;
   margin: 10px 0 22px;
   color: #4f5d55;
-  font-size: clamp(22px, 5vw, 34px);
+  font-size: 28px;
   font-weight: 900;
   text-align: center;
 }
@@ -223,7 +224,7 @@ h1 {
   background: var(--mint);
   color: var(--ink);
   box-shadow: 0 12px 0 var(--line);
-  font-size: clamp(28px, 7vw, 44px);
+  font-size: 36px;
   font-weight: 900;
   cursor: pointer;
   touch-action: none;
@@ -257,8 +258,16 @@ body.thinking .paw-button {
   background: var(--yellow);
 }
 
+body.thinking .paw-dot {
+  animation: think-pulse 900ms ease-in-out infinite alternate;
+}
+
 body.speaking .paw-button {
   background: var(--sky);
+}
+
+body.speaking .toy-mouth {
+  animation: talking 360ms ease-in-out infinite alternate;
 }
 
 .paw-dot {
@@ -339,6 +348,25 @@ body.speaking .toy-dog::after {
   }
 }
 
+@keyframes think-pulse {
+  from {
+    transform: scale(0.82);
+  }
+  to {
+    transform: scale(1.12);
+    background: var(--coral);
+  }
+}
+
+@keyframes talking {
+  from {
+    height: 18px;
+  }
+  to {
+    height: 32px;
+  }
+}
+
 @media (max-width: 520px) {
   .toy-shell {
     padding: 10px;
@@ -346,5 +374,98 @@ body.speaking .toy-dog::after {
 
   .toy-stage {
     min-height: calc(100vh - 20px);
+  }
+
+  .toy-dog {
+    width: min(270px, 70vw);
+    margin-top: 12px;
+  }
+
+  h1 {
+    margin-top: 10px;
+    font-size: 68px;
+  }
+
+  .toy-state {
+    min-height: 34px;
+    margin: 6px 0 14px;
+    font-size: 22px;
+  }
+
+  .paw-button {
+    width: min(210px, 54vw);
+    font-size: 28px;
+  }
+
+  .paw-dot {
+    width: 36px;
+    height: 36px;
+  }
+
+  .toy-meter {
+    width: min(210px, 54vw);
+    margin-top: 14px;
+  }
+
+  .toy-hint {
+    margin-top: 12px;
+  }
+}
+
+@media (max-width: 520px) and (max-height: 700px) {
+  .toy-shell {
+    padding: 6px;
+  }
+
+  .toy-stage {
+    min-height: calc(100dvh - 12px);
+  }
+
+  .toy-status {
+    top: 10px;
+    right: 10px;
+    min-width: 76px;
+    padding: 7px 9px;
+  }
+
+  .toy-dog {
+    width: min(220px, 58vw);
+    margin-top: 2px;
+  }
+
+  h1 {
+    margin-top: 3px;
+    font-size: 58px;
+  }
+
+  .toy-state {
+    margin: 3px 0 8px;
+    font-size: 20px;
+  }
+
+  .paw-button {
+    width: min(168px, 44vw);
+    gap: 3px;
+    border-width: 3px;
+    box-shadow: 0 8px 0 var(--line);
+    font-size: 24px;
+  }
+
+  .paw-dot {
+    width: 30px;
+    height: 30px;
+    border-width: 3px;
+  }
+
+  .toy-meter {
+    width: min(168px, 44vw);
+    height: 10px;
+    margin-top: 10px;
+    border-width: 2px;
+  }
+
+  .toy-hint {
+    margin-top: 8px;
+    font-size: 12px;
   }
 }

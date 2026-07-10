@@ -17,15 +17,17 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Optional access-token protection for exposing the prototype over HTTPS.
 - JSONL event logging for the parent diagnostics page.
 - Short-lived in-memory conversation context for natural follow-up questions.
+- Reviewed rotating content for short stories, Tang poems, animal clues, counting, colors, sounds, movement, and comfort.
 
 ## Interaction Model
 
 The child-facing flow is intentionally simple:
 
-1. Press once to wake the dog.
-2. Press and hold to speak.
-3. Release to send.
-4. Listen to the reply.
+1. Press and hold to speak.
+2. Release to send.
+3. Listen to the local waiting melody and the reply.
+
+Short taps and cancelled gestures are ignored instead of being uploaded. The separate wake tap was removed because children naturally started speaking during the first press.
 
 The model should not depend on the child giving complete answers. Inputs like `嗯嗯`, `啊呀`, and `汪汪` are treated as valid interaction signals and routed to simple activities such as clapping, counting, or comfort.
 
@@ -312,15 +314,16 @@ Routine smoke tests use `tts=off` so they do not spend TTS quota.
 
 ## Parent Validation Checklist
 
-Use `http://127.0.0.1:8791/toy.html` for child-facing validation.
+Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html` for child-facing validation.
 
-1. Confirm the page says `OpenAI` or `阿里云` and shows the expected voice and speed.
-2. Tap once to wake the dog and check whether the wake voice sounds like server TTS, not browser speech.
-3. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should still respond with a simple playful activity.
-4. Say `豆豆讲故事`. The reply should be short enough to finish before the child loses attention.
-5. Say `我想玩插座`. The dog should route to a caregiver safety reply.
-6. Check whether the child understands the reply without looking at the screen.
-7. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
+1. Confirm the diagnostics page shows the expected provider, voice, and speed, and the child page says `在线`.
+2. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should acknowledge immediately with a local melody and still respond with a simple activity.
+3. Tap quickly without speaking. The page should ask for a longer press without sending a request.
+4. Say `豆豆讲故事` several times. The stories should rotate and remain short enough to finish before the child loses attention.
+5. Say `豆豆猜动物`, answer the clue, and check whether the next reply follows the context.
+6. Say `我想玩插座`. The dog should route to a caregiver safety reply.
+7. Check whether the child understands the reply without looking at the screen.
+8. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
 
 ## Safety Rules
 

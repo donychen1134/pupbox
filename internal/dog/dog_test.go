@@ -1,6 +1,10 @@
 package dog
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestCheckSafetyDanger(t *testing.T) {
 	got := CheckSafety("我想玩插座")
@@ -11,9 +15,12 @@ func TestCheckSafetyDanger(t *testing.T) {
 
 func TestMockReplyPoem(t *testing.T) {
 	got := MockReply("豆豆背唐诗")
-	if !containsAny(got, "床前明月光") {
-		t.Fatalf("expected poem reply, got %q", got)
+	for _, reply := range activityReplyVariants["poem"] {
+		if got == reply {
+			return
+		}
 	}
+	t.Fatalf("expected a reviewed poem reply, got %q", got)
 }
 
 func TestPlanActivityStory(t *testing.T) {
@@ -33,12 +40,48 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		{text: "一二三", id: "counting"},
 		{text: "找 红 色", id: "color_hunt"},
 		{text: "旺旺", id: "clap"},
+		{text: "我们玩声音游戏", id: "sound_game"},
 	}
 	for _, tt := range tests {
 		got, ok := PlanActivity(tt.text)
 		if !ok || got.ID != tt.id {
 			t.Fatalf("PlanActivity(%q) = %#v ok=%v, want %s", tt.text, got, ok, tt.id)
 		}
+	}
+}
+
+func TestActivityReplyVariantsAreRichAndShort(t *testing.T) {
+	for id, replies := range activityReplyVariants {
+		if len(replies) < 5 {
+			t.Fatalf("activity %q has only %d replies", id, len(replies))
+		}
+		seen := make(map[string]bool, len(replies))
+		for _, reply := range replies {
+			if strings.TrimSpace(reply) == "" {
+				t.Fatalf("activity %q has an empty reply", id)
+			}
+			if utf8.RuneCountInString(reply) > 90 {
+				t.Fatalf("activity %q reply is too long: %q", id, reply)
+			}
+			if seen[reply] {
+				t.Fatalf("activity %q has duplicate reply: %q", id, reply)
+			}
+			seen[reply] = true
+		}
+	}
+}
+
+func TestStoryActivityRotatesContent(t *testing.T) {
+	seen := make(map[string]bool)
+	for range 3 {
+		activity, ok := PlanActivity("再讲一个故事")
+		if !ok || activity.ID != "story" {
+			t.Fatalf("unexpected activity: %#v ok=%v", activity, ok)
+		}
+		seen[activity.Reply] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("story replies did not rotate: %#v", seen)
 	}
 }
 
