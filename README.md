@@ -18,6 +18,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - JSONL event logging for the parent diagnostics page.
 - Short-lived in-memory conversation context for natural follow-up questions.
 - Reviewed rotating content for short stories, Tang poems, animal clues, counting, colors, sounds, movement, and comfort.
+- Private on-disk TTS caching and background warmup for common reviewed replies.
 
 ## Interaction Model
 
@@ -110,6 +111,10 @@ When exposing Pupbox outside localhost, set an access token:
 export PUPBOX_ACCESS_TOKEN=<url-safe-random-token>
 export PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
 export PUPBOX_EVENT_LOG_LIMIT=500
+export PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
+export PUPBOX_TTS_CACHE_LIMIT=512
+export PUPBOX_TTS_PREWARM=true
+export PUPBOX_TTS_PREWARM_LIMIT=32
 # Optional, parent-only diagnostic recording playback:
 export PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 export PUPBOX_RECORDING_LIMIT=20
@@ -311,6 +316,8 @@ make check-secrets    # scans for obvious committed secrets before pushing
 ```
 
 Routine smoke tests use `tts=off` so they do not spend TTS quota.
+
+TTS responses are cached by provider, model, voice, format, speed, and exact reply text. `PUPBOX_TTS_CACHE_DIR` keeps generated audio across service restarts; files use hashed names, directory mode `0700`, and file mode `0600`. On startup, Pupbox warms the first `PUPBOX_TTS_PREWARM_LIMIT` reviewed replies in the background. Set `PUPBOX_TTS_PREWARM=false` to disable provider calls during startup.
 
 ## Parent Validation Checklist
 

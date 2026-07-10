@@ -224,6 +224,41 @@ func nextActivityReply(id, fallback string) string {
 	return replies[index]
 }
 
+// PrewarmReplies returns reviewed fixed replies in the order most useful to a child session.
+func PrewarmReplies() []string {
+	replies := make([]string, 0, 64)
+	seen := make(map[string]bool, 64)
+	appendReply := func(reply string) {
+		reply = strings.TrimSpace(reply)
+		if reply == "" || seen[reply] {
+			return
+		}
+		seen[reply] = true
+		replies = append(replies, reply)
+	}
+
+	appendReply("汪，豆豆在这里。你想听故事，还是玩猜动物？")
+	appendReply("豆豆听见啦。我们玩拍拍手，一、二、三，拍拍。")
+	for _, activity := range babbleActivities() {
+		appendReply(activity.Reply)
+	}
+	for _, id := range []string{
+		"story",
+		"poem",
+		"animal_guess",
+		"color_hunt",
+		"counting",
+		"sound_game",
+		"clap",
+		"comfort",
+	} {
+		for _, reply := range activityReplyVariants[id] {
+			appendReply(reply)
+		}
+	}
+	return replies
+}
+
 var activityReplyVariants = map[string][]string{
 	"story": {
 		"从前有一只小狗豆豆，找到一颗会发光的小星星。它把星星送回天空，夜晚就亮起来啦。",

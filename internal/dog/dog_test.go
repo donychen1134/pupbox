@@ -85,6 +85,27 @@ func TestStoryActivityRotatesContent(t *testing.T) {
 	}
 }
 
+func TestPrewarmRepliesAreUniqueAndCoverReviewedActivities(t *testing.T) {
+	replies := PrewarmReplies()
+	if len(replies) < 50 {
+		t.Fatalf("prewarm replies = %d, want at least 50", len(replies))
+	}
+	seen := make(map[string]bool, len(replies))
+	for _, reply := range replies {
+		if seen[reply] {
+			t.Fatalf("duplicate prewarm reply: %q", reply)
+		}
+		seen[reply] = true
+	}
+	for _, id := range []string{"story", "poem", "animal_guess"} {
+		for _, reply := range activityReplyVariants[id] {
+			if !seen[reply] {
+				t.Fatalf("prewarm replies do not include %s reply %q", id, reply)
+			}
+		}
+	}
+}
+
 func TestLooksLikeToddlerBabble(t *testing.T) {
 	if !LooksLikeToddlerBabble("嗯嗯") {
 		t.Fatal("expected toddler babble")

@@ -37,7 +37,12 @@ type Server struct {
 	sessions    *SessionStore
 	speechMu    sync.Mutex
 	speechCache map[string]cachedSpeech
+	speechDisk  *SpeechDiskCache
 	speechCalls map[string]*speechCall
+	warmRunning atomic.Bool
+	warmTotal   atomic.Int64
+	warmDone    atomic.Int64
+	warmErrors  atomic.Int64
 	traceSeq    atomic.Uint64
 	log         *slog.Logger
 }
@@ -76,15 +81,17 @@ type VoiceProvider interface {
 }
 
 type Config struct {
-	Chat           ChatProvider
-	Voice          VoiceProvider
-	StaticDir      string
-	AccessToken    string
-	EventLogPath   string
-	EventLogLimit  int
-	RecordingDir   string
-	RecordingLimit int
-	Logger         *slog.Logger
+	Chat             ChatProvider
+	Voice            VoiceProvider
+	StaticDir        string
+	AccessToken      string
+	EventLogPath     string
+	EventLogLimit    int
+	RecordingDir     string
+	RecordingLimit   int
+	SpeechCacheDir   string
+	SpeechCacheLimit int
+	Logger           *slog.Logger
 }
 
 func New(cfg Config) *Server {
@@ -106,6 +113,12 @@ func New(cfg Config) *Server {
 			logger.Warn("event log is not ready", "error", err)
 		}
 	}
+	speechDisk := NewSpeechDiskCache(cfg.SpeechCacheDir, cfg.SpeechCacheLimit)
+	if speechDisk != nil {
+		if err := speechDisk.Ensure(); err != nil {
+			logger.Warn("speech cache is not ready", "error", err)
+		}
+	}
 	s := &Server{
 		mux:         http.NewServeMux(),
 		chat:        cfg.Chat,
@@ -118,6 +131,7 @@ func New(cfg Config) *Server {
 		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
 		sessions:    NewSessionStore(128, 6, 15*time.Minute),
 		speechCache: make(map[string]cachedSpeech),
+		speechDisk:  speechDisk,
 		speechCalls: make(map[string]*speechCall),
 		log:         logger,
 	}
@@ -174,26 +188,36 @@ func requestAccessToken(r *http.Request) string {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	eventLogPath, eventLogReady, eventCount, eventLogErr := s.events.Status()
+	speechCacheDir, speechCacheReady, speechCacheEntries, speechCacheErr := s.speechDisk.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":               true,
-		"auth_required":    s.accessToken != "",
-		"event_log":        s.events != nil,
-		"event_log_ready":  eventLogReady,
-		"event_log_path":   eventLogPath,
-		"event_log_events": eventCount,
-		"event_log_error":  errorString(eventLogErr),
-		"recordings":       s.recordings != nil,
-		"mode":             s.mode(),
-		"dog":              dog.Name,
-		"chat_provider":    s.chatProvider(),
-		"voice_provider":   s.voiceProvider(),
-		"chat_model":       s.modelName("chat"),
-		"stt_model":        s.modelName("stt"),
-		"tts_model":        s.modelName("tts"),
-		"tts_voice":        s.modelName("voice"),
-		"tts_format":       s.modelName("format"),
-		"tts_speed":        s.ttsSpeed(),
-		"server_time":      time.Now().Format(time.RFC3339),
+		"ok":                true,
+		"auth_required":     s.accessToken != "",
+		"event_log":         s.events != nil,
+		"event_log_ready":   eventLogReady,
+		"event_log_path":    eventLogPath,
+		"event_log_events":  eventCount,
+		"event_log_error":   errorString(eventLogErr),
+		"tts_cache":         s.speechDisk != nil,
+		"tts_cache_ready":   speechCacheReady,
+		"tts_cache_dir":     speechCacheDir,
+		"tts_cache_entries": speechCacheEntries,
+		"tts_cache_error":   errorString(speechCacheErr),
+		"tts_warm_running":  s.warmRunning.Load(),
+		"tts_warm_total":    s.warmTotal.Load(),
+		"tts_warm_done":     s.warmDone.Load(),
+		"tts_warm_errors":   s.warmErrors.Load(),
+		"recordings":        s.recordings != nil,
+		"mode":              s.mode(),
+		"dog":               dog.Name,
+		"chat_provider":     s.chatProvider(),
+		"voice_provider":    s.voiceProvider(),
+		"chat_model":        s.modelName("chat"),
+		"stt_model":         s.modelName("stt"),
+		"tts_model":         s.modelName("tts"),
+		"tts_voice":         s.modelName("voice"),
+		"tts_format":        s.modelName("format"),
+		"tts_speed":         s.ttsSpeed(),
+		"server_time":       time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -512,7 +536,24 @@ func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, str
 	s.speechCalls[key] = call
 	s.speechMu.Unlock()
 
+	if audio, mime, ok, cacheErr := s.speechDisk.Get(key); ok {
+		s.completeSpeechCall(key, call, audio, mime, nil)
+		return audio, mime, nil
+	} else if cacheErr != nil {
+		s.log.Warn("failed to read speech cache", "error", cacheErr)
+	}
+
 	audio, mime, err := s.voice.Speak(ctx, text)
+	if err == nil {
+		if cacheErr := s.speechDisk.Put(key, mime, audio); cacheErr != nil {
+			s.log.Warn("failed to write speech cache", "error", cacheErr)
+		}
+	}
+	s.completeSpeechCall(key, call, audio, mime, err)
+	return audio, mime, err
+}
+
+func (s *Server) completeSpeechCall(key string, call *speechCall, audio []byte, mime string, err error) {
 	s.speechMu.Lock()
 	if err == nil {
 		if len(s.speechCache) >= maxSpeechCacheEntries {
@@ -529,7 +570,6 @@ func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, str
 	delete(s.speechCalls, key)
 	close(call.done)
 	s.speechMu.Unlock()
-	return audio, mime, err
 }
 
 func (s *Server) speechCacheKey(text string) string {
@@ -541,6 +581,47 @@ func (s *Server) speechCacheKey(text string) string {
 		strconv.FormatFloat(s.ttsSpeed(), 'f', 3, 64),
 		text,
 	}, "\x00")
+}
+
+func (s *Server) PrewarmSpeech(ctx context.Context, texts []string) {
+	if !s.useVoice || !s.warmRunning.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.warmRunning.Store(false)
+
+	unique := make([]string, 0, len(texts))
+	seen := make(map[string]bool, len(texts))
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		unique = append(unique, text)
+	}
+	s.warmTotal.Store(int64(len(unique)))
+	s.warmDone.Store(0)
+	s.warmErrors.Store(0)
+	if len(unique) == 0 {
+		return
+	}
+
+	s.log.Info("speech cache warmup started", "items", len(unique))
+	for _, text := range unique {
+		if ctx.Err() != nil {
+			break
+		}
+		if _, _, err := s.synthesizeSpeech(ctx, text); err != nil {
+			s.warmErrors.Add(1)
+			s.log.Warn("speech cache warmup item failed", "error", err)
+		}
+		s.warmDone.Add(1)
+	}
+	s.log.Info(
+		"speech cache warmup finished",
+		"completed", s.warmDone.Load(),
+		"errors", s.warmErrors.Load(),
+	)
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

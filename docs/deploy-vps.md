@@ -93,6 +93,10 @@ PUPBOX_VOICE_PROVIDER=dashscope
 PUPBOX_ACCESS_TOKEN=<generate-a-url-safe-random-token>
 PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
 PUPBOX_EVENT_LOG_LIMIT=500
+PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
+PUPBOX_TTS_CACHE_LIMIT=512
+PUPBOX_TTS_PREWARM=true
+PUPBOX_TTS_PREWARM_LIMIT=32
 # Optional parent-only diagnostic playback. Keep short retention.
 PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 PUPBOX_RECORDING_LIMIT=20
@@ -114,7 +118,7 @@ Create a dedicated service user and data directories:
 
 ```bash
 sudo useradd --system --home /var/lib/pupbox --shell /usr/sbin/nologin pupbox 2>/dev/null || true
-sudo install -d -o pupbox -g pupbox -m 700 /var/lib/pupbox /var/lib/pupbox/recordings
+sudo install -d -o pupbox -g pupbox -m 700 /var/lib/pupbox /var/lib/pupbox/recordings /var/lib/pupbox/tts-cache
 ```
 
 Generate a token with a command such as:
@@ -238,5 +242,6 @@ https://pupbox.983457.xyz/toy.html?clearToken=1
 - Do not paste real API keys or tokens into issue trackers, screenshots, docs, or commits.
 - Do not store audio recordings by default. If `PUPBOX_RECORDING_DIR` is enabled for parent diagnostics, keep short retention and protect the site with `PUPBOX_ACCESS_TOKEN`.
 - The JSONL event log stores text transcripts, replies, routes, timings, provider errors, and recording availability flags. `PUPBOX_EVENT_LOG_LIMIT` bounds retention by event count. It must not store audio bytes, API keys, access tokens, session IDs, or client IPs.
+- The TTS cache stores generated reply audio under hashed filenames with private permissions. `PUPBOX_TTS_CACHE_LIMIT` bounds the number of files, and changing provider, model, voice, format, or speed automatically uses different cache keys.
 - Keep routine tests on `tts=off` unless you explicitly want to spend TTS quota.
 - Start with browser validation before building an iOS app; this keeps the product risk focused on the child voice interaction.
