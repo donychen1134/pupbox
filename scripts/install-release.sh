@@ -32,11 +32,29 @@ esac
 
 package="pupbox-linux-${arch}"
 url="${repo}/releases/download/${tag}/${package}.tar.gz"
+checksums_url="${repo}/releases/download/${tag}/checksums.txt"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 echo "Downloading ${url}"
 curl -fL --retry 3 --retry-delay 2 -o "${tmp_dir}/${package}.tar.gz" "${url}"
+curl -fL --retry 3 --retry-delay 2 -o "${tmp_dir}/checksums.txt" "${checksums_url}"
+
+expected_checksum="$(awk -v file="${package}.tar.gz" '$2 == file || $2 == "*" file {print $1}' "${tmp_dir}/checksums.txt")"
+if [[ ! "${expected_checksum}" =~ ^[a-fA-F0-9]{64}$ ]]; then
+  echo "checksum not found for ${package}.tar.gz" >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_checksum="$(sha256sum "${tmp_dir}/${package}.tar.gz" | awk '{print $1}')"
+else
+  actual_checksum="$(shasum -a 256 "${tmp_dir}/${package}.tar.gz" | awk '{print $1}')"
+fi
+if [[ "${actual_checksum}" != "${expected_checksum}" ]]; then
+  echo "checksum mismatch for ${package}.tar.gz" >&2
+  exit 1
+fi
+echo "Verified SHA-256 checksum for ${package}.tar.gz"
 
 mkdir -p "${install_root}/releases/${tag}"
 tar -xzf "${tmp_dir}/${package}.tar.gz" -C "${tmp_dir}"

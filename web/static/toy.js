@@ -1,4 +1,5 @@
 const SILENT_WAV_DATA_URI = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==";
+const MAX_RECORDING_MS = 12000;
 
 const state = {
   recorder: null,
@@ -17,6 +18,8 @@ const state = {
   audioPlayer: null,
   audioObjectURL: "",
   audioUnlocked: false,
+  busy: false,
+  sessionID: "",
 };
 
 const els = {
@@ -32,6 +35,7 @@ init();
 
 async function init() {
   state.accessToken = loadAccessToken();
+  state.sessionID = loadSessionID("pupbox.toySessionId");
   bindEvents();
   await loadHealth();
 }
@@ -88,6 +92,7 @@ async function loadHealth() {
 
 async function startPress(event) {
   event?.preventDefault?.();
+  if (state.busy) return;
   unlockAudioPlayback();
   if (event?.pointerId !== undefined) {
     if (!event.isPrimary || state.activePointerId !== null) return;
@@ -261,6 +266,10 @@ function startRecordingMeter(recorder) {
 
 function updateRecordingMeter(recorder) {
   const durationMS = Date.now() - state.recordingStartedAt;
+  if (durationMS >= MAX_RECORDING_MS) {
+    stopPress();
+    return;
+  }
   const seconds = Math.max(0, durationMS / 1000);
   const level = recorder?.level?.() || 0;
   const fill = Math.max(0.04, Math.min(1, level * 8));
@@ -357,6 +366,8 @@ function actionLabel(payload) {
 function setPhase(phase, stateText, label) {
   document.body.classList.remove("idle", "listening", "thinking", "speaking");
   document.body.classList.add(phase);
+  state.busy = phase === "thinking" || phase === "speaking";
+  els.recordButton.setAttribute("aria-disabled", String(state.busy));
   els.toyState.textContent = stateText;
   els.recordLabel.textContent = label;
   if (phase === "thinking") {
@@ -542,7 +553,27 @@ function loadAccessToken() {
 function authHeaders(headers = {}) {
   const result = { ...headers };
   if (state.accessToken) result.Authorization = `Bearer ${state.accessToken}`;
+  if (state.sessionID) result["X-Pupbox-Session-ID"] = state.sessionID;
   return result;
+}
+
+function loadSessionID(storageKey) {
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored) return stored;
+    const id = `toy-${randomSessionID()}`;
+    window.localStorage.setItem(storageKey, id);
+    return id;
+  } catch (error) {
+    return `toy-${randomSessionID()}`;
+  }
+}
+
+function randomSessionID() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const values = new Uint32Array(4);
+  window.crypto?.getRandomValues?.(values);
+  return Array.from(values, (value) => value.toString(16).padStart(8, "0")).join("");
 }
 
 function storedAccessToken() {
@@ -580,8 +611,8 @@ async function speakWithServerVoice(text) {
   try {
     const payload = await postJSON("/api/speech", { text });
     if (payload.audio_base64 && payload.audio_mime) {
-      await playBase64Audio(payload.audio_base64, payload.audio_mime);
-      return;
+      const played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
+      if (played) return;
     }
   } catch (error) {
     // Fall back to browser speech below.

@@ -31,7 +31,12 @@ jobs:
           cache: true
 
       - name: Test
-        run: go test ./...
+        run: |
+          go test ./...
+          go vet ./...
+          node --check web/static/toy.js
+          node --check web/static/app.js
+          make check-secrets
 
       - name: Build release packages
         shell: bash

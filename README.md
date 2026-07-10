@@ -16,6 +16,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Hardware action names in activity responses, ready to map to tail/LED/motion control.
 - Optional access-token protection for exposing the prototype over HTTPS.
 - JSONL event logging for the parent diagnostics page.
+- Short-lived in-memory conversation context for natural follow-up questions.
 
 ## Interaction Model
 
@@ -106,6 +107,7 @@ When exposing Pupbox outside localhost, set an access token:
 ```bash
 export PUPBOX_ACCESS_TOKEN=<url-safe-random-token>
 export PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
+export PUPBOX_EVENT_LOG_LIMIT=500
 # Optional, parent-only diagnostic recording playback:
 export PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 export PUPBOX_RECORDING_LIMIT=20
@@ -130,6 +132,8 @@ https://pupbox.example.com/toy.html?clearToken=1
 ```
 
 See [docs/deploy-vps.md](docs/deploy-vps.md) for the GitHub Release, systemd, and Caddy deployment path. The VPS does not need Go installed when using release packages.
+
+The browser also creates an anonymous per-page session ID. The server keeps at most six recent turns for 15 minutes so follow-ups such as `然后呢` can use context. Session context is memory-only and is not written to the JSONL event log.
 
 ## OpenAI Settings
 
@@ -261,6 +265,8 @@ X-Pupbox-Access-Token: <token>
 ?token=<token>
 ```
 
+Browser requests also send an optional `X-Pupbox-Session-ID` header. It is an anonymous conversation identifier, not an authentication credential, and is only retained in server memory.
+
 `POST /api/chat` synthesizes TTS in OpenAI mode unless `tts=off` is set:
 
 ```bash
@@ -288,7 +294,7 @@ Voice and chat responses include timing diagnostics:
 }
 ```
 
-`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, timings, provider errors, and whether a protected diagnostic recording is available. Audio bytes, API keys, access tokens, and client IPs are not stored in the event log.
+`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, timings, provider errors, and whether a protected diagnostic recording is available. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
 
 ## Local Automation
 

@@ -52,12 +52,13 @@ checksums.txt
 On the VPS, install a release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/donychen1134/pupbox/main/scripts/install-release.sh \
+release_tag=v0.1.8
+curl -fsSL "https://raw.githubusercontent.com/donychen1134/pupbox/${release_tag}/scripts/install-release.sh" \
   -o /tmp/install-pupbox-release.sh
-sudo bash /tmp/install-pupbox-release.sh v0.1.0
+sudo bash /tmp/install-pupbox-release.sh "${release_tag}"
 ```
 
-The script detects `amd64` or `arm64`, downloads the matching tarball from GitHub Releases, extracts it under `/opt/pupbox/releases/<tag>`, and updates `/opt/pupbox/current`.
+The script detects `amd64` or `arm64`, downloads the matching tarball and `checksums.txt` from GitHub Releases, verifies SHA-256, extracts it under `/opt/pupbox/releases/<tag>`, and updates `/opt/pupbox/current`.
 
 The release package includes:
 
@@ -91,6 +92,7 @@ PUPBOX_CHAT_PROVIDER=dashscope
 PUPBOX_VOICE_PROVIDER=dashscope
 PUPBOX_ACCESS_TOKEN=<generate-a-url-safe-random-token>
 PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
+PUPBOX_EVENT_LOG_LIMIT=500
 # Optional parent-only diagnostic playback. Keep short retention.
 PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 PUPBOX_RECORDING_LIMIT=20
@@ -108,11 +110,11 @@ Keep this file readable only by the service user or root:
 chmod 600 /etc/pupbox/pupbox.env
 ```
 
-Create the event-log directory:
+Create a dedicated service user and data directories:
 
 ```bash
-mkdir -p /var/lib/pupbox
-chmod 700 /var/lib/pupbox
+sudo useradd --system --home /var/lib/pupbox --shell /usr/sbin/nologin pupbox 2>/dev/null || true
+sudo install -d -o pupbox -g pupbox -m 700 /var/lib/pupbox /var/lib/pupbox/recordings
 ```
 
 Generate a token with a command such as:
@@ -135,13 +137,20 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=pupbox
+Group=pupbox
 WorkingDirectory=/opt/pupbox/current
 EnvironmentFile=/etc/pupbox/pupbox.env
 ExecStart=/opt/pupbox/current/pupbox-server
 Restart=always
 RestartSec=3
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pupbox
 
 [Install]
 WantedBy=multi-user.target
@@ -228,6 +237,6 @@ https://pupbox.983457.xyz/toy.html?clearToken=1
 - Rotate `PUPBOX_ACCESS_TOKEN` if the URL is shared accidentally.
 - Do not paste real API keys or tokens into issue trackers, screenshots, docs, or commits.
 - Do not store audio recordings by default. If `PUPBOX_RECORDING_DIR` is enabled for parent diagnostics, keep short retention and protect the site with `PUPBOX_ACCESS_TOKEN`.
-- The JSONL event log stores text transcripts, replies, routes, timings, provider errors, and recording availability flags. It must not store audio bytes, API keys, access tokens, or client IPs.
+- The JSONL event log stores text transcripts, replies, routes, timings, provider errors, and recording availability flags. `PUPBOX_EVENT_LOG_LIMIT` bounds retention by event count. It must not store audio bytes, API keys, access tokens, session IDs, or client IPs.
 - Keep routine tests on `tts=off` unless you explicitly want to spend TTS quota.
 - Start with browser validation before building an iOS app; this keeps the product risk focused on the child voice interaction.

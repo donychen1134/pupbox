@@ -64,6 +64,7 @@ Useful optional settings:
 export PUPBOX_ADDR=127.0.0.1:8791
 export PUPBOX_ACCESS_TOKEN=...
 export PUPBOX_EVENT_LOG_PATH=data/events.jsonl
+export PUPBOX_EVENT_LOG_LIMIT=500
 export PUPBOX_CHAT_MODEL=gpt-4o-mini
 export PUPBOX_STT_MODEL=whisper-1
 export PUPBOX_TTS_MODEL=gpt-4o-mini-tts

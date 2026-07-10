@@ -29,6 +29,7 @@ func main() {
 		StaticDir:      "web/static",
 		AccessToken:    os.Getenv("PUPBOX_ACCESS_TOKEN"),
 		EventLogPath:   envDefault("PUPBOX_EVENT_LOG_PATH", "data/events.jsonl"),
+		EventLogLimit:  envInt("PUPBOX_EVENT_LOG_LIMIT", 500),
 		RecordingDir:   os.Getenv("PUPBOX_RECORDING_DIR"),
 		RecordingLimit: envInt("PUPBOX_RECORDING_LIMIT", 20),
 		Logger:         logger,

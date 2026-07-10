@@ -34,8 +34,10 @@ type Server struct {
 	accessToken string
 	events      *EventStore
 	recordings  *RecordingStore
+	sessions    *SessionStore
 	speechMu    sync.Mutex
 	speechCache map[string]cachedSpeech
+	speechCalls map[string]*speechCall
 	traceSeq    atomic.Uint64
 	log         *slog.Logger
 }
@@ -44,6 +46,15 @@ type cachedSpeech struct {
 	audio []byte
 	mime  string
 }
+
+type speechCall struct {
+	done  chan struct{}
+	audio []byte
+	mime  string
+	err   error
+}
+
+const maxSpeechCacheEntries = 128
 
 type ChatProvider interface {
 	Available() bool
@@ -70,6 +81,7 @@ type Config struct {
 	StaticDir      string
 	AccessToken    string
 	EventLogPath   string
+	EventLogLimit  int
 	RecordingDir   string
 	RecordingLimit int
 	Logger         *slog.Logger
@@ -88,6 +100,12 @@ func New(cfg Config) *Server {
 			voice = provider
 		}
 	}
+	events := NewEventStore(cfg.EventLogPath, cfg.EventLogLimit)
+	if events != nil {
+		if err := events.Ensure(); err != nil {
+			logger.Warn("event log is not ready", "error", err)
+		}
+	}
 	s := &Server{
 		mux:         http.NewServeMux(),
 		chat:        cfg.Chat,
@@ -96,9 +114,11 @@ func New(cfg Config) *Server {
 		useVoice:    voice != nil && voice.Available() && !forceMock,
 		staticDir:   cfg.StaticDir,
 		accessToken: strings.TrimSpace(cfg.AccessToken),
-		events:      NewEventStore(cfg.EventLogPath),
+		events:      events,
 		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
+		sessions:    NewSessionStore(128, 6, 15*time.Minute),
 		speechCache: make(map[string]cachedSpeech),
+		speechCalls: make(map[string]*speechCall),
 		log:         logger,
 	}
 	s.routes()
@@ -153,22 +173,27 @@ func requestAccessToken(r *http.Request) string {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	eventLogPath, eventLogReady, eventCount, eventLogErr := s.events.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":             true,
-		"auth_required":  s.accessToken != "",
-		"event_log":      s.events != nil,
-		"recordings":     s.recordings != nil,
-		"mode":           s.mode(),
-		"dog":            dog.Name,
-		"chat_provider":  s.chatProvider(),
-		"voice_provider": s.voiceProvider(),
-		"chat_model":     s.modelName("chat"),
-		"stt_model":      s.modelName("stt"),
-		"tts_model":      s.modelName("tts"),
-		"tts_voice":      s.modelName("voice"),
-		"tts_format":     s.modelName("format"),
-		"tts_speed":      s.ttsSpeed(),
-		"server_time":    time.Now().Format(time.RFC3339),
+		"ok":               true,
+		"auth_required":    s.accessToken != "",
+		"event_log":        s.events != nil,
+		"event_log_ready":  eventLogReady,
+		"event_log_path":   eventLogPath,
+		"event_log_events": eventCount,
+		"event_log_error":  errorString(eventLogErr),
+		"recordings":       s.recordings != nil,
+		"mode":             s.mode(),
+		"dog":              dog.Name,
+		"chat_provider":    s.chatProvider(),
+		"voice_provider":   s.voiceProvider(),
+		"chat_model":       s.modelName("chat"),
+		"stt_model":        s.modelName("stt"),
+		"tts_model":        s.modelName("tts"),
+		"tts_voice":        s.modelName("voice"),
+		"tts_format":       s.modelName("format"),
+		"tts_speed":        s.ttsSpeed(),
+		"server_time":      time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -223,8 +248,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	timings := TimingStats{}
+	sessionID := requestSessionID(r)
+	history := s.sessions.History(sessionID)
 	replyStarted := time.Now()
-	reply, safety, activity, source, aiErr := s.reply(r.Context(), text)
+	reply, safety, activity, source, aiErr := s.reply(r.Context(), text, history)
 	timings.ReplyMS = elapsedMS(replyStarted)
 	ttsStarted := time.Now()
 	audio, mime, ttsErr := s.speak(r, reply)
@@ -243,6 +270,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
+	s.sessions.Append(sessionID, text, reply)
 	s.recordConversation("chat", response, nil, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -357,8 +385,10 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sessionID := requestSessionID(r)
+	history := s.sessions.History(sessionID)
 	replyStarted := time.Now()
-	reply, safety, activity, source, aiErr := s.reply(r.Context(), transcript)
+	reply, safety, activity, source, aiErr := s.reply(r.Context(), transcript, history)
 	timings.ReplyMS = elapsedMS(replyStarted)
 	ttsStarted := time.Now()
 	audio, mime, ttsErr := s.speak(r, reply)
@@ -378,6 +408,7 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
+	s.sessions.Append(sessionID, transcript, reply)
 	s.recordConversation("voice", response, recording, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr), Recording: errorString(recordingErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -394,8 +425,8 @@ func (s *Server) recordConversation(endpoint string, response chatResponse, reco
 		Time:            time.Now().UTC().Format(time.RFC3339Nano),
 		TraceID:         traceID,
 		Endpoint:        endpoint,
-		Transcript:      response.Transcript,
-		Reply:           response.Reply,
+		Transcript:      truncateText(response.Transcript, 500),
+		Reply:           truncateText(response.Reply, 500),
 		Mode:            response.Mode,
 		Source:          response.Source,
 		SafetyTriggered: response.Safety.Triggered,
@@ -428,7 +459,7 @@ func (s *Server) nextTraceID() string {
 	return fmt.Sprintf("%x-%x", time.Now().UnixNano(), seq)
 }
 
-func (s *Server) reply(ctx context.Context, text string) (string, dog.SafetyResult, *dog.Activity, string, error) {
+func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (string, dog.SafetyResult, *dog.Activity, string, error) {
 	safety := dog.CheckSafety(text)
 	if safety.Triggered {
 		return safety.Reply, safety, nil, "safety", nil
@@ -439,7 +470,7 @@ func (s *Server) reply(ctx context.Context, text string) (string, dog.SafetyResu
 	}
 
 	if s.useChat {
-		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), text)
+		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), contextualInput(history, text))
 		if err != nil {
 			fallback := dog.MockReply(text)
 			return fallback, safety, nil, "mock_fallback", err
@@ -468,16 +499,37 @@ func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, str
 		s.speechMu.Unlock()
 		return audio, cached.mime, nil
 	}
+	if call, ok := s.speechCalls[key]; ok {
+		s.speechMu.Unlock()
+		select {
+		case <-call.done:
+			return append([]byte(nil), call.audio...), call.mime, call.err
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		}
+	}
+	call := &speechCall{done: make(chan struct{})}
+	s.speechCalls[key] = call
 	s.speechMu.Unlock()
 
 	audio, mime, err := s.voice.Speak(ctx, text)
-	if err != nil {
-		return nil, "", err
-	}
 	s.speechMu.Lock()
-	s.speechCache[key] = cachedSpeech{audio: append([]byte(nil), audio...), mime: mime}
+	if err == nil {
+		if len(s.speechCache) >= maxSpeechCacheEntries {
+			for cachedKey := range s.speechCache {
+				delete(s.speechCache, cachedKey)
+				break
+			}
+		}
+		s.speechCache[key] = cachedSpeech{audio: append([]byte(nil), audio...), mime: mime}
+	}
+	call.audio = append([]byte(nil), audio...)
+	call.mime = mime
+	call.err = err
+	delete(s.speechCalls, key)
+	close(call.done)
 	s.speechMu.Unlock()
-	return audio, mime, nil
+	return audio, mime, err
 }
 
 func (s *Server) speechCacheKey(text string) string {

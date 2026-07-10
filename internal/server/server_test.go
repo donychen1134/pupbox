@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,13 +114,13 @@ func TestSpeechCachesTTS(t *testing.T) {
 		}
 	}
 
-	if voice.speakCalls != 1 {
-		t.Fatalf("speakCalls = %d, want 1", voice.speakCalls)
+	if calls := voice.speakCalls.Load(); calls != 1 {
+		t.Fatalf("speakCalls = %d, want 1", calls)
 	}
 }
 
 type countingVoiceProvider struct {
-	speakCalls int
+	speakCalls atomic.Int32
 }
 
 func (p *countingVoiceProvider) Available() bool   { return true }
@@ -131,7 +134,59 @@ func (p *countingVoiceProvider) Transcribe(context.Context, []byte, string, stri
 	return "嗯嗯", nil
 }
 func (p *countingVoiceProvider) Speak(_ context.Context, text string) ([]byte, string, error) {
-	p.speakCalls++
+	p.speakCalls.Add(1)
+	return []byte("audio:" + text), "audio/wav", nil
+}
+
+func TestSpeechCoalescesConcurrentTTS(t *testing.T) {
+	voice := &blockingVoiceProvider{started: make(chan struct{}), release: make(chan struct{})}
+	srv := New(Config{Voice: voice})
+
+	request := func(done chan<- struct{}) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/speech", strings.NewReader(`{"text":"汪，等等豆豆。"}`))
+		req.Header.Set("Content-Type", "application/json")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("speech status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		done <- struct{}{}
+	}
+
+	done := make(chan struct{}, 2)
+	go request(done)
+	<-voice.started
+	go request(done)
+	time.Sleep(20 * time.Millisecond)
+	close(voice.release)
+	<-done
+	<-done
+	if calls := voice.calls.Load(); calls != 1 {
+		t.Fatalf("Speak calls = %d, want 1", calls)
+	}
+}
+
+type blockingVoiceProvider struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingVoiceProvider) Available() bool   { return true }
+func (p *blockingVoiceProvider) Name() string      { return "blocking-voice" }
+func (p *blockingVoiceProvider) STTModel() string  { return "test-stt" }
+func (p *blockingVoiceProvider) TTSModel() string  { return "test-tts" }
+func (p *blockingVoiceProvider) TTSVoice() string  { return "test-speaker" }
+func (p *blockingVoiceProvider) TTSFormat() string { return "wav" }
+func (p *blockingVoiceProvider) TTSSpeed() float64 { return 1 }
+func (p *blockingVoiceProvider) Transcribe(context.Context, []byte, string, string) (string, error) {
+	return "嗯嗯", nil
+}
+func (p *blockingVoiceProvider) Speak(_ context.Context, text string) ([]byte, string, error) {
+	if p.calls.Add(1) == 1 {
+		close(p.started)
+	}
+	<-p.release
 	return []byte("audio:" + text), "audio/wav", nil
 }
 
@@ -176,6 +231,77 @@ func TestEventLogRecordsChatAndReturnsRecentEvents(t *testing.T) {
 	if event.TraceID == "" || event.Time == "" {
 		t.Fatalf("trace/time missing: %+v", event)
 	}
+}
+
+func TestEventStoreRetainsConfiguredLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	store := NewEventStore(path, 2)
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("ensure event store: %v", err)
+	}
+	for _, transcript := range []string{"one", "two", "three"} {
+		if err := store.Append(ConversationEvent{Transcript: transcript}); err != nil {
+			t.Fatalf("append %q: %v", transcript, err)
+		}
+	}
+	events, err := store.Recent(10)
+	if err != nil {
+		t.Fatalf("recent events: %v", err)
+	}
+	if len(events) != 2 || events[0].Transcript != "three" || events[1].Transcript != "two" {
+		t.Fatalf("events = %+v, want newest two", events)
+	}
+	gotPath, ready, count, statusErr := store.Status()
+	if gotPath != path || !ready || count != 2 || statusErr != nil {
+		t.Fatalf("status = (%q, %v, %d, %v)", gotPath, ready, count, statusErr)
+	}
+}
+
+func TestChatUsesRecentSessionContext(t *testing.T) {
+	chat := &capturingChatProvider{}
+	srv := New(Config{Chat: chat})
+
+	for _, text := range []string{"云朵在哪里", "为什么呢"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/chat?tts=off", strings.NewReader(`{"text":"`+text+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(sessionHeader, "session-1234")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("chat status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	inputs := chat.Inputs()
+	if len(inputs) != 2 {
+		t.Fatalf("inputs = %d, want 2", len(inputs))
+	}
+	if strings.Contains(inputs[0], "最近的对话") {
+		t.Fatalf("first input unexpectedly has history: %q", inputs[0])
+	}
+	if !strings.Contains(inputs[1], "小朋友：云朵在哪里") || !strings.Contains(inputs[1], "豆豆：测试回复 1") {
+		t.Fatalf("second input missing history: %q", inputs[1])
+	}
+}
+
+type capturingChatProvider struct {
+	mu     sync.Mutex
+	inputs []string
+}
+
+func (p *capturingChatProvider) Available() bool   { return true }
+func (p *capturingChatProvider) Name() string      { return "test-chat" }
+func (p *capturingChatProvider) ChatModel() string { return "test-model" }
+func (p *capturingChatProvider) CreateResponse(_ context.Context, _, input string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inputs = append(p.inputs, input)
+	return fmt.Sprintf("测试回复 %d", len(p.inputs)), nil
+}
+func (p *capturingChatProvider) Inputs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.inputs...)
 }
 
 func TestAudioDurationMSWAV(t *testing.T) {
