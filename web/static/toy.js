@@ -9,6 +9,8 @@ const state = {
   speechSent: false,
   health: null,
   feedbackContext: null,
+  outputGain: null,
+  thinkingGain: null,
   thinkingTimer: null,
   thinkingNodes: new Set(),
   accessToken: "",
@@ -19,6 +21,7 @@ const state = {
   audioUnlocked: false,
   busy: false,
   sessionID: "",
+  turnStartedAt: 0,
 };
 
 const els = {
@@ -45,6 +48,11 @@ function bindEvents() {
   els.recordButton.addEventListener("pointercancel", stopRecording);
   els.recordButton.addEventListener("pointerleave", () => {
     if (state.recording) stopRecording();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.feedbackContext && state.feedbackContext.state !== "running") {
+      state.feedbackContext.resume().catch(() => {});
+    }
   });
 }
 
@@ -75,6 +83,7 @@ async function loadHealth() {
 async function startRecording(event) {
   event.preventDefault();
   if (state.busy || state.recording) return;
+  state.turnStartedAt = 0;
   unlockAudioPlayback();
   unlockFeedbackAudio();
 
@@ -111,6 +120,8 @@ async function startRecording(event) {
 
 function stopRecording() {
   if (state.recognition) {
+    if (!state.recording) return;
+    state.turnStartedAt = performance.now();
     state.recording = false;
     stopRecordingMeter();
     setPhase("thinking", "豆豆听到啦", "想一想");
@@ -119,13 +130,21 @@ function stopRecording() {
   }
 
   if (!state.recording || !state.recorder) return;
+  state.turnStartedAt = performance.now();
   const recorder = state.recorder;
   state.recorder = null;
   state.recording = false;
   stopRecordingMeter();
   setPhase("thinking", "豆豆听到啦", "想一想");
   recorder.stop().then((recording) => {
-    sendRecording(recording.blob, recording.mimeType, recording.filename, recording.durationMs, recording.peakLevel);
+    sendRecording(
+      recording.blob,
+      recording.mimeType,
+      recording.filename,
+      recording.durationMs,
+      recording.peakLevel,
+      state.turnStartedAt,
+    );
   }).catch(() => speakStatus("豆豆没有听清。再试一次吧。", "没有听清"));
 }
 
@@ -167,7 +186,7 @@ function startBrowserSpeech(event) {
     cleanupSpeech();
     if (!state.speechSent) {
       state.speechSent = true;
-      sendRecognizedText(text || "嗯嗯");
+      sendRecognizedText(text || "嗯嗯", state.turnStartedAt || performance.now());
     }
   });
 
@@ -218,11 +237,15 @@ function stopRecordingMeter() {
   document.body.style.setProperty("--voice-level", "0");
 }
 
-async function sendRecognizedText(text) {
+async function sendRecognizedText(text, turnStartedAt = performance.now()) {
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
+    const requestStartedAt = performance.now();
     const response = await postJSON("/api/chat?tts=off", { text });
-    await handleDogResponse(response);
+    await handleDogResponse(response, {
+      turnStartedAt,
+      voiceResponseMS: elapsedClientMS(requestStartedAt),
+    });
   } catch (error) {
     await speakStatus(
       error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。",
@@ -231,7 +254,7 @@ async function sendRecognizedText(text) {
   }
 }
 
-async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
+async function sendRecording(blob, mimeType, filename, durationMs, peakLevel, turnStartedAt = performance.now()) {
   if (!blob || blob.size === 0) return;
   if (durationMs && durationMs < 260) {
     await speakStatus("豆豆没有听清。再说长一点点。", "没有听清");
@@ -244,10 +267,14 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
 
   setPhase("thinking", "豆豆想一想", "等一下");
   try {
+    const requestStartedAt = performance.now();
     const response = await fetch("/api/voice?tts=off", { method: "POST", headers: authHeaders(), body: form });
     if (!response.ok) throw await responseError(response);
     const payload = await response.json();
-    await handleDogResponse(payload);
+    await handleDogResponse(payload, {
+      turnStartedAt,
+      voiceResponseMS: elapsedClientMS(requestStartedAt),
+    });
   } catch (error) {
     await speakStatus(
       error.status === 401 ? "请爸爸妈妈帮豆豆设置一下。" : "豆豆这里出了一点小问题。",
@@ -256,54 +283,95 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
   }
 }
 
-async function handleDogResponse(payload) {
+async function handleDogResponse(payload, turn = {}) {
   const reply = payload.reply || "豆豆没有想好。";
   const speakingState = payload.safety?.triggered ? "找爸爸妈妈" : actionLabel(payload);
   let played = false;
+  let playbackMS = 0;
+  let playbackStartedAt = 0;
+  let streamResult = {};
   if (payload.audio_base64 && payload.audio_mime) {
     setPhase("speaking", speakingState, "等一下");
+    playbackStartedAt = performance.now();
     played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
+    playbackMS = elapsedClientMS(playbackStartedAt);
   } else if (hasServerVoice() && state.health?.tts_streaming) {
-    played = await playSpeechStream(reply, () => {
+    streamResult = await playSpeechStream(reply, () => {
+      playbackStartedAt = performance.now();
       setPhase("speaking", speakingState, "等一下");
     });
+    played = streamResult.played;
+    playbackMS = streamResult.playbackMS || 0;
   }
   if (!played) {
     setPhase("speaking", speakingState, "等一下");
+    playbackStartedAt = performance.now();
     await speak(reply);
+    playbackMS = elapsedClientMS(playbackStartedAt);
   }
+  const turnTotalMS = elapsedClientMS(turn.turnStartedAt);
   setPhase("idle", "按住小爪子说话", "按住说话");
+  reportTurnMetrics(payload.trace_id, {
+    voice_response_ms: turn.voiceResponseMS || 0,
+    tts_first_audio_ms: streamResult.ttsFirstAudioMS || 0,
+    tts_ms: streamResult.ttsMS || payload.timings?.tts_ms || 0,
+    playback_ms: playbackMS,
+    turn_total_ms: turnTotalMS,
+    tts_cache: streamResult.cache || (played ? "complete" : "browser-fallback"),
+    playback_error: streamResult.error || "",
+  });
 }
 
 async function playSpeechStream(text, onFirstAudio) {
+  const requestStartedAt = performance.now();
+  const completePlayback = [];
+  let reader = null;
+  let pcmPlayer = null;
+  let started = false;
+  let firstAudioAt = 0;
+  let cache = "";
+  let ttsMS = 0;
+  let streamError = "";
   try {
     const response = await fetch("/api/speech-stream", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ text }),
     });
-    if (!response.ok || !response.body) return false;
+    if (!response.ok || !response.body) {
+      return { played: false, error: `speech stream HTTP ${response.status}` };
+    }
 
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const decoder = new TextDecoder();
-    const completePlayback = [];
-    let pcmPlayer = null;
     let buffer = "";
-    let started = false;
 
     const processLine = (line) => {
       if (!line.trim()) return;
       const event = JSON.parse(line);
-      if (event.type !== "audio" || !event.audio_base64) return;
-      if (!started) {
-        started = true;
-        onFirstAudio?.();
+      if (event.type === "done") {
+        cache = event.cache || cache;
+        ttsMS = event.timings?.tts_ms || event.timings?.total_ms || ttsMS;
+        return;
       }
+      if (event.type === "error") throw new Error(event.error || "speech stream ended early");
+      if (event.type !== "audio" || !event.audio_base64) return;
+      let accepted = false;
       if (event.audio_mime === "audio/pcm") {
-        if (!pcmPlayer) pcmPlayer = createPCMPlayer(event.sample_rate || 24000);
-        pcmPlayer?.enqueue(event.audio_base64);
+        if (!pcmPlayer) {
+          pcmPlayer = createPCMPlayer(event.sample_rate || 24000);
+          if (!pcmPlayer) throw new Error("Web Audio is not available");
+        }
+        accepted = pcmPlayer.enqueue(event.audio_base64);
       } else {
         completePlayback.push(playBase64Audio(event.audio_base64, event.audio_mime || "audio/mpeg"));
+        accepted = true;
+      }
+      cache = event.cache || cache;
+      if (accepted && !started) {
+        started = true;
+        firstAudioAt = performance.now();
+        onFirstAudio?.();
       }
     };
 
@@ -316,12 +384,23 @@ async function playSpeechStream(text, onFirstAudio) {
       if (done) break;
     }
     if (buffer.trim()) processLine(buffer);
-    if (pcmPlayer) await pcmPlayer.finish();
-    if (completePlayback.length) await Promise.all(completePlayback);
-    return started;
   } catch (error) {
-    return false;
+    streamError = error?.message || String(error);
+    reader?.cancel().catch(() => {});
   }
+  if (pcmPlayer) await pcmPlayer.finish();
+  if (completePlayback.length) {
+    const results = await Promise.all(completePlayback);
+    if (!pcmPlayer && !results.some(Boolean)) started = false;
+  }
+  return {
+    played: started,
+    ttsFirstAudioMS: firstAudioAt ? Math.max(0, Math.round(firstAudioAt - requestStartedAt)) : 0,
+    ttsMS,
+    playbackMS: firstAudioAt ? elapsedClientMS(firstAudioAt) : 0,
+    cache,
+    error: streamError,
+  };
 }
 
 function createPCMPlayer(sampleRate) {
@@ -354,7 +433,7 @@ function createPCMPlayer(sampleRate) {
         leftover = bytes[bytes.length - 1];
         bytes = bytes.subarray(0, bytes.length - 1);
       }
-      if (!bytes.length) return;
+      if (!bytes.length) return false;
 
       const samples = new Float32Array(bytes.length / 2);
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -365,15 +444,21 @@ function createPCMPlayer(sampleRate) {
       audioBuffer.copyToChannel(samples, 0);
       const source = context.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(context.destination);
+      source.connect(audioOutput(context));
       const startAt = Math.max(nextStart, context.currentTime + 0.03);
-      source.start(startAt);
-      nextStart = startAt + audioBuffer.duration;
       pending += 1;
       source.addEventListener("ended", () => {
         pending -= 1;
         finishIfReady();
       }, { once: true });
+      try {
+        source.start(startAt);
+      } catch (error) {
+        pending -= 1;
+        throw error;
+      }
+      nextStart = startAt + audioBuffer.duration;
+      return true;
     },
     finish() {
       finished = true;
@@ -667,6 +752,10 @@ function startThinkingSound() {
   if (state.thinkingTimer) return;
   const context = unlockFeedbackAudio();
   if (!context) return;
+  const gain = context.createGain();
+  gain.gain.value = 1;
+  gain.connect(audioOutput(context));
+  state.thinkingGain = gain;
   playThinkingMotif(context);
   state.thinkingTimer = window.setInterval(() => playThinkingMotif(context), 1800);
 }
@@ -676,9 +765,24 @@ function stopThinkingSound() {
     window.clearInterval(state.thinkingTimer);
     state.thinkingTimer = null;
   }
+  const gain = state.thinkingGain;
+  state.thinkingGain = null;
+  if (gain && state.feedbackContext) {
+    const now = state.feedbackContext.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.01);
+    window.setTimeout(() => {
+      try {
+        gain.disconnect();
+      } catch (error) {
+        // The gain may already be disconnected.
+      }
+    }, 30);
+  }
   for (const oscillator of state.thinkingNodes) {
     try {
-      oscillator.stop();
+      oscillator.stop(state.feedbackContext ? state.feedbackContext.currentTime + 0.01 : 0);
     } catch (error) {
       // The oscillator may already have ended.
     }
@@ -689,11 +793,24 @@ function stopThinkingSound() {
 function unlockFeedbackAudio() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return null;
-  if (!state.feedbackContext) state.feedbackContext = new AudioContext();
-  if (state.feedbackContext.state === "suspended") {
+  if (!state.feedbackContext || state.feedbackContext.state === "closed") {
+    state.feedbackContext = new AudioContext();
+    state.outputGain = null;
+  }
+  audioOutput(state.feedbackContext);
+  if (state.feedbackContext.state !== "running") {
     state.feedbackContext.resume().catch(() => {});
   }
   return state.feedbackContext;
+}
+
+function audioOutput(context) {
+  if (!state.outputGain) {
+    state.outputGain = context.createGain();
+    state.outputGain.gain.value = 1;
+    state.outputGain.connect(context.destination);
+  }
+  return state.outputGain;
 }
 
 function playCue(kind) {
@@ -721,7 +838,7 @@ function playTone(context, frequency, delay, duration, gainValue, thinking) {
   gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.02);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(gain);
-  gain.connect(context.destination);
+  gain.connect(thinking && state.thinkingGain ? state.thinkingGain : audioOutput(context));
   oscillator.start(start);
   oscillator.stop(start + duration + 0.02);
   if (thinking) {
@@ -810,6 +927,22 @@ function audioPlayer() {
     state.audioPlayer = new Audio();
     state.audioPlayer.preload = "auto";
     state.audioPlayer.playsInline = true;
+    state.audioPlayer.volume = 1;
   }
   return state.audioPlayer;
+}
+
+function elapsedClientMS(startedAt) {
+  if (!startedAt) return 0;
+  return Math.max(0, Math.round(performance.now() - startedAt));
+}
+
+function reportTurnMetrics(traceID, metrics) {
+  if (!traceID) return;
+  fetch("/api/turn-metrics", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ trace_id: traceID, ...metrics }),
+    keepalive: true,
+  }).catch(() => {});
 }

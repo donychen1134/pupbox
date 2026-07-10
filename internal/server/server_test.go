@@ -49,6 +49,7 @@ func TestAccessTokenProtectsAPIs(t *testing.T) {
 		{name: "chat", method: http.MethodPost, path: "/api/chat", body: `{"text":"嗯嗯"}`},
 		{name: "speech", method: http.MethodPost, path: "/api/speech", body: `{"text":"汪。"}`},
 		{name: "speech stream", method: http.MethodPost, path: "/api/speech-stream", body: `{"text":"汪。"}`},
+		{name: "turn metrics", method: http.MethodPost, path: "/api/turn-metrics", body: `{"trace_id":"trace-1"}`},
 		{name: "voice", method: http.MethodPost, path: "/api/voice"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -342,6 +343,77 @@ func TestEventLogRecordsChatAndReturnsRecentEvents(t *testing.T) {
 	}
 	if event.TraceID == "" || event.Time == "" {
 		t.Fatalf("trace/time missing: %+v", event)
+	}
+}
+
+func TestTurnMetricsUpdatesPersistedConversation(t *testing.T) {
+	eventLogPath := filepath.Join(t.TempDir(), "events.jsonl")
+	srv := New(Config{EventLogPath: eventLogPath})
+
+	chatRec := httptest.NewRecorder()
+	chatReq := httptest.NewRequest(http.MethodPost, "/api/chat?tts=off", strings.NewReader(`{"text":"豆豆讲故事"}`))
+	chatReq.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(chatRec, chatReq)
+	if chatRec.Code != http.StatusOK {
+		t.Fatalf("chat status = %d; body=%s", chatRec.Code, chatRec.Body.String())
+	}
+	var chat chatResponse
+	if err := json.Unmarshal(chatRec.Body.Bytes(), &chat); err != nil {
+		t.Fatalf("decode chat: %v", err)
+	}
+	if chat.TraceID == "" {
+		t.Fatal("chat response is missing trace ID")
+	}
+
+	metrics := turnMetricsRequest{
+		TraceID:         chat.TraceID,
+		VoiceResponseMS: 824,
+		TTSFirstAudioMS: 431,
+		TTSMS:           1270,
+		PlaybackMS:      2420,
+		TurnTotalMS:     3912,
+		TTSCache:        "miss",
+	}
+	body, err := json.Marshal(metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricsRec := httptest.NewRecorder()
+	metricsReq := httptest.NewRequest(http.MethodPost, "/api/turn-metrics", bytes.NewReader(body))
+	metricsReq.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(metricsRec, metricsReq)
+	if metricsRec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d; body=%s", metricsRec.Code, metricsRec.Body.String())
+	}
+
+	events, err := srv.events.Recent(10)
+	if err != nil {
+		t.Fatalf("recent events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want the original record only", len(events))
+	}
+	event := events[0]
+	if event.TraceID != chat.TraceID || event.Transcript != "豆豆讲故事" {
+		t.Fatalf("conversation identity changed: %+v", event)
+	}
+	if event.Timings.VoiceResponseMS != 824 || event.Timings.TTSFirstAudioMS != 431 ||
+		event.Timings.TTSMS != 1270 || event.Timings.PlaybackMS != 2420 || event.Timings.TurnTotalMS != 3912 {
+		t.Fatalf("turn timings = %+v", event.Timings)
+	}
+	if event.TTSCache != "miss" {
+		t.Fatalf("tts cache = %q, want miss", event.TTSCache)
+	}
+}
+
+func TestTurnMetricsRejectsUnknownConversation(t *testing.T) {
+	srv := New(Config{EventLogPath: filepath.Join(t.TempDir(), "events.jsonl")})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/turn-metrics", strings.NewReader(`{"trace_id":"missing","turn_total_ms":123}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
 

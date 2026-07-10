@@ -20,6 +20,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Reviewed rotating content for short stories, Tang poems, animal clues, counting, colors, sounds, movement, and comfort.
 - Private on-disk TTS caching and background warmup for common reviewed replies.
 - Progressive CosyVoice PCM playback for uncached child-facing replies, with complete-audio fallback.
+- End-to-end turn timing persisted by trace ID, including upload, STT, reply, first audio, and playback.
 
 ## Interaction Model
 
@@ -263,6 +264,7 @@ GET  /api/recordings/<trace_id>
 POST /api/chat   {"text":"豆豆讲故事"}
 POST /api/speech {"text":"汪，豆豆醒啦"}
 POST /api/speech-stream {"text":"豆豆今天很开心"}
+POST /api/turn-metrics {"trace_id":"...","turn_total_ms":4200}
 POST /api/voice  multipart/form-data audio=<recording>
 ```
 
@@ -276,7 +278,9 @@ X-Pupbox-Access-Token: <token>
 
 Browser requests also send an optional `X-Pupbox-Session-ID` header. It is an anonymous conversation identifier, not an authentication credential, and is only retained in server memory.
 
-The child page requests `/api/voice?tts=off` first so STT and the reply are available without waiting for a complete audio file. It then calls `/api/speech-stream`, which relays official DashScope SSE PCM chunks as NDJSON and schedules them through Web Audio. Cached replies and providers without streaming support use one complete audio event instead. The parent page keeps the original single-response API for diagnostics.
+The child page requests `/api/voice?tts=off` first so STT and the reply are available without waiting for a complete audio file. It then calls `/api/speech-stream`, which relays official DashScope SSE PCM chunks as NDJSON and schedules them through Web Audio. Cached replies and providers without streaming support use one complete audio event instead. After playback, the browser posts protected timing data to `/api/turn-metrics`; the existing JSONL event is updated by `trace_id` instead of creating a duplicate event.
+
+Child-page audio uses full application gain and follows the iPhone media volume. The web page cannot read or set the device's system volume; use the hardware volume buttons while audio is playing. The microphone track is stopped before reply playback.
 
 `POST /api/chat` synthesizes TTS in OpenAI mode unless `tts=off` is set:
 
@@ -294,9 +298,14 @@ Voice and chat responses include timing diagnostics:
 {
   "timings": {
     "total_ms": 2860,
+    "upload_ms": 120,
     "stt_ms": 640,
-    "reply_ms": 0,
-    "tts_ms": 2100,
+    "reply_ms": 710,
+    "tts_first_audio_ms": 620,
+    "tts_ms": 1580,
+    "voice_response_ms": 1510,
+    "playback_ms": 2840,
+    "turn_total_ms": 4970,
     "audio_duration_ms": 1100,
     "audio_peak": 0.32,
     "audio_rms": 0.04,
@@ -305,7 +314,7 @@ Voice and chat responses include timing diagnostics:
 }
 ```
 
-`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, timings, provider errors, and whether a protected diagnostic recording is available. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
+`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, upload/STT/Qwen/TTS/playback timings, TTS cache source, provider errors, and whether a protected diagnostic recording is available. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
 
 ## Local Automation
 

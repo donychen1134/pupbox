@@ -154,8 +154,9 @@ function renderEvent(event) {
     eventBadge(event.endpoint || "-", ""),
     eventBadge(event.mode || "-", ""),
     eventBadge(event.source || "-", sourceClass(event.source)),
-    eventBadge(formatTimings(event.timings || {}), ""),
+    eventBadge(formatEventTotal(event.timings || {}), ""),
   );
+  if (event.tts_cache) meta.append(eventBadge(`TTS ${event.tts_cache}`, ""));
 
   const body = document.createElement("div");
   body.className = "event-body";
@@ -166,6 +167,8 @@ function renderEvent(event) {
   if (event.activity_label || event.safety_category) {
     body.append(eventLine("路由", event.activity_label || event.safety_category));
   }
+  const timingBreakdown = eventTimingBreakdown(event);
+  if (timingBreakdown) body.append(timingBreakdown);
   if (event.has_recording && event.trace_id) {
     body.append(recordingPlayback(event));
   }
@@ -234,6 +237,42 @@ function eventLine(label, content) {
   return row;
 }
 
+function eventTimingBreakdown(event) {
+  const timings = event.timings || {};
+  const values = [
+    ["上传", timings.upload_ms],
+    ["STT", timings.stt_ms],
+    [event.source === "dashscope" ? "Qwen" : "回复", timings.reply_ms],
+    ["TTS 首音", timings.tts_first_audio_ms],
+    ["播放", timings.playback_ms],
+  ].filter(([, value]) => Number.isFinite(value) && value >= 0 && (value > 0 || timings.turn_total_ms));
+  if (!values.length) return null;
+
+  const timeline = document.createElement("div");
+  timeline.className = "event-timing";
+  for (const [label, value] of values) {
+    const stage = document.createElement("div");
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = formatDuration(value);
+    stage.append(labelEl, valueEl);
+    timeline.append(stage);
+  }
+  return timeline;
+}
+
+function formatEventTotal(timings) {
+  if (timings.turn_total_ms) return `一轮 ${formatDuration(timings.turn_total_ms)}`;
+  return `后端 ${formatDuration(timings.total_ms || 0)}`;
+}
+
+function formatDuration(value) {
+  const milliseconds = Math.max(0, Number(value) || 0);
+  if (milliseconds >= 1000) return `${(milliseconds / 1000).toFixed(milliseconds >= 10000 ? 1 : 2)}s`;
+  return `${Math.round(milliseconds)}ms`;
+}
+
 function emptyEvents(text) {
   const empty = document.createElement("div");
   empty.className = "empty-events";
@@ -262,6 +301,7 @@ function eventErrors(errors) {
   if (errors.chat) parts.push(`Chat: ${errors.chat}`);
   if (errors.tts) parts.push(`TTS: ${errors.tts}`);
   if (errors.recording) parts.push(`Recording: ${errors.recording}`);
+  if (errors.playback) parts.push(`Playback: ${errors.playback}`);
   return parts.join(" / ");
 }
 
@@ -568,10 +608,15 @@ function showError(error) {
 }
 
 function formatTimings(timings) {
-  const parts = [`总计 ${timings.total_ms || 0}ms`];
+  const parts = [timings.turn_total_ms
+    ? `完整一轮 ${formatDuration(timings.turn_total_ms)}`
+    : `后端 ${formatDuration(timings.total_ms || 0)}`];
+  if (timings.upload_ms) parts.push(`上传 ${formatDuration(timings.upload_ms)}`);
   if (timings.stt_ms) parts.push(`听写 ${timings.stt_ms}ms`);
   if (timings.reply_ms) parts.push(`回复 ${timings.reply_ms}ms`);
   if (timings.tts_ms) parts.push(`合成 ${timings.tts_ms}ms`);
+  if (timings.tts_first_audio_ms) parts.push(`首音 ${formatDuration(timings.tts_first_audio_ms)}`);
+  if (timings.playback_ms) parts.push(`播放 ${formatDuration(timings.playback_ms)}`);
   if (timings.audio_duration_ms) parts.push(`录音 ${(timings.audio_duration_ms / 1000).toFixed(1)}s`);
   if (timings.audio_peak) parts.push(`音量 ${formatAudioLevel(timings.audio_peak)}`);
   if (timings.audio_bytes) parts.push(`音频 ${Math.round(timings.audio_bytes / 1024)}KB`);

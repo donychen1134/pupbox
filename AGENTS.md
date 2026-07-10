@@ -106,6 +106,8 @@ Do not write real key values into docs, examples, logs, screenshots, or commits.
 - In server voice mode, `POST /api/chat` may synthesize TTS unless `tts=off` is set.
 - API responses should keep the `timings` object for latency diagnosis.
 - Keep `/api/speech-stream` additive and preserve complete-audio fallback; the parent diagnostics page should not depend on browser PCM streaming.
+- Once child playback has accepted a streamed audio chunk, do not automatically replay the full reply after a later stream or browser error.
+- Preserve `trace_id` across reply, streamed TTS, client playback metrics, and the existing JSONL event; timing updates must not append duplicate conversation records.
 - Browser microphone uploads should stay in 16 kHz mono WAV unless a provider-specific reason requires another format.
 - Use `toy.html` for child-facing flow verification and `index.html` for parent/debug verification.
 

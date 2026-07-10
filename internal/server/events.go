@@ -36,6 +36,7 @@ type ConversationEvent struct {
 	ActivityLabel   string       `json:"activity_label,omitempty"`
 	HasRecording    bool         `json:"has_recording,omitempty"`
 	RecordingMIME   string       `json:"recording_mime,omitempty"`
+	TTSCache        string       `json:"tts_cache,omitempty"`
 	Timings         TimingStats  `json:"timings"`
 	Errors          *EventErrors `json:"errors,omitempty"`
 }
@@ -45,6 +46,7 @@ type EventErrors struct {
 	Chat      string `json:"chat,omitempty"`
 	TTS       string `json:"tts,omitempty"`
 	Recording string `json:"recording,omitempty"`
+	Playback  string `json:"playback,omitempty"`
 }
 
 type eventErrors struct {
@@ -173,6 +175,61 @@ func (s *EventStore) Recent(limit int) ([]ConversationEvent, error) {
 	return events, nil
 }
 
+func (s *EventStore) Update(traceID string, update func(*ConversationEvent)) (bool, error) {
+	if s == nil || strings.TrimSpace(traceID) == "" || update == nil {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureLocked(); err != nil {
+		return false, err
+	}
+
+	file, err := os.Open(s.path)
+	if err != nil {
+		return false, err
+	}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lines := make([]string, 0, s.count)
+	found := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var event ConversationEvent
+		if err := json.Unmarshal([]byte(line), &event); err == nil && event.TraceID == traceID {
+			update(&event)
+			encoded, encodeErr := json.Marshal(event)
+			if encodeErr != nil {
+				file.Close()
+				return false, encodeErr
+			}
+			line = string(encoded)
+			found = true
+		}
+		lines = append(lines, line)
+	}
+	closeErr := file.Close()
+	if err := scanner.Err(); err != nil {
+		return false, err
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	if !found {
+		return false, nil
+	}
+	if err := s.writeLinesLocked(lines); err != nil {
+		s.readyErr = err
+		return false, err
+	}
+	s.count = len(lines)
+	s.readyErr = nil
+	return true, nil
+}
+
 func (s *EventStore) ensureLocked() error {
 	if s.initialized {
 		return nil
@@ -235,6 +292,15 @@ func (s *EventStore) pruneLocked() error {
 		return closeErr
 	}
 
+	if err := s.writeLinesLocked(lines); err != nil {
+		return err
+	}
+	s.count = len(lines)
+	s.readyErr = nil
+	return nil
+}
+
+func (s *EventStore) writeLinesLocked(lines []string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".events-*.tmp")
 	if err != nil {
 		return err
@@ -262,8 +328,6 @@ func (s *EventStore) pruneLocked() error {
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		return err
 	}
-	s.count = len(lines)
-	s.readyErr = nil
 	return nil
 }
 

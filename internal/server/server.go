@@ -157,6 +157,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
 	s.mux.HandleFunc("POST /api/speech", s.requireAccess(s.handleSpeech))
 	s.mux.HandleFunc("POST /api/speech-stream", s.requireAccess(s.handleSpeechStream))
+	s.mux.HandleFunc("POST /api/turn-metrics", s.requireAccess(s.handleTurnMetrics))
 	s.mux.HandleFunc("POST /api/voice", s.requireAccess(s.handleVoice))
 	s.mux.HandleFunc("/", s.handleStatic)
 }
@@ -267,6 +268,7 @@ func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
+	traceID := s.nextTraceID()
 	var req chatRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -290,6 +292,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	timings.TTSMS = elapsedMS(ttsStarted)
 	timings.TotalMS = elapsedMS(started)
 	response := chatResponse{
+		TraceID:     traceID,
 		Transcript:  text,
 		Reply:       reply,
 		AudioBase64: encodeAudio(audio),
@@ -482,7 +485,7 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 
 	filename := header.Filename
 	contentType := header.Header.Get("Content-Type")
-	timings := TimingStats{AudioBytes: int64(len(data))}
+	timings := TimingStats{UploadMS: elapsedMS(started), AudioBytes: int64(len(data))}
 	if stats, ok := audioStats(data, filename, contentType); ok {
 		timings.AudioDurationMS = stats.DurationMS
 		timings.AudioPeak = stats.Peak
@@ -556,6 +559,58 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Append(sessionID, transcript, reply)
 	s.recordConversation("voice", response, recording, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr), Recording: errorString(recordingErr)})
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleTurnMetrics(w http.ResponseWriter, r *http.Request) {
+	var req turnMetricsRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.TraceID = strings.TrimSpace(req.TraceID)
+	if req.TraceID == "" || len(req.TraceID) > 128 {
+		writeError(w, http.StatusBadRequest, "valid trace_id is required")
+		return
+	}
+	if s.events == nil {
+		writeError(w, http.StatusServiceUnavailable, "event log is not enabled")
+		return
+	}
+	if !validClientTiming(req.VoiceResponseMS) || !validClientTiming(req.TTSFirstAudioMS) ||
+		!validClientTiming(req.TTSMS) || !validClientTiming(req.PlaybackMS) || !validClientTiming(req.TurnTotalMS) {
+		writeError(w, http.StatusBadRequest, "invalid timing value")
+		return
+	}
+	cache := strings.TrimSpace(req.TTSCache)
+	if len(cache) > 32 {
+		writeError(w, http.StatusBadRequest, "invalid tts_cache value")
+		return
+	}
+	playbackError := truncateText(strings.TrimSpace(req.PlaybackError), 200)
+	updated, err := s.events.Update(req.TraceID, func(event *ConversationEvent) {
+		event.Timings.VoiceResponseMS = req.VoiceResponseMS
+		event.Timings.TTSFirstAudioMS = req.TTSFirstAudioMS
+		event.Timings.TTSMS = req.TTSMS
+		event.Timings.PlaybackMS = req.PlaybackMS
+		event.Timings.TurnTotalMS = req.TurnTotalMS
+		event.TTSCache = cache
+		if playbackError != "" {
+			if event.Errors == nil {
+				event.Errors = &EventErrors{}
+			}
+			event.Errors.Playback = playbackError
+		}
+	})
+	if err != nil {
+		s.log.Warn("failed to update turn metrics", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update turn metrics")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "conversation event not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
 
 func (s *Server) recordConversation(endpoint string, response chatResponse, recording *RecordingMeta, errors eventErrors) {
@@ -952,6 +1007,17 @@ type speechRequest struct {
 	Text string `json:"text"`
 }
 
+type turnMetricsRequest struct {
+	TraceID         string `json:"trace_id"`
+	VoiceResponseMS int64  `json:"voice_response_ms"`
+	TTSFirstAudioMS int64  `json:"tts_first_audio_ms"`
+	TTSMS           int64  `json:"tts_ms"`
+	PlaybackMS      int64  `json:"playback_ms"`
+	TurnTotalMS     int64  `json:"turn_total_ms"`
+	TTSCache        string `json:"tts_cache"`
+	PlaybackError   string `json:"playback_error"`
+}
+
 type speechResponse struct {
 	AudioBase64 string      `json:"audio_base64,omitempty"`
 	AudioMIME   string      `json:"audio_mime,omitempty"`
@@ -987,14 +1053,22 @@ type chatResponse struct {
 
 type TimingStats struct {
 	TotalMS         int64   `json:"total_ms"`
+	UploadMS        int64   `json:"upload_ms,omitempty"`
 	STTMS           int64   `json:"stt_ms"`
 	ReplyMS         int64   `json:"reply_ms"`
 	TTSMS           int64   `json:"tts_ms"`
 	TTSFirstAudioMS int64   `json:"tts_first_audio_ms,omitempty"`
+	VoiceResponseMS int64   `json:"voice_response_ms,omitempty"`
+	PlaybackMS      int64   `json:"playback_ms,omitempty"`
+	TurnTotalMS     int64   `json:"turn_total_ms,omitempty"`
 	AudioBytes      int64   `json:"audio_bytes,omitempty"`
 	AudioDurationMS int64   `json:"audio_duration_ms,omitempty"`
 	AudioPeak       float64 `json:"audio_peak,omitempty"`
 	AudioRMS        float64 `json:"audio_rms,omitempty"`
+}
+
+func validClientTiming(value int64) bool {
+	return value >= 0 && value <= 10*60*1000
 }
 
 func elapsedMS(started time.Time) int64 {

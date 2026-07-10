@@ -589,6 +589,35 @@ body.recording .mic-button {
   overflow-wrap: anywhere;
 }
 
+.event-timing {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(58px, 1fr));
+  gap: 1px;
+  margin-top: 2px;
+  border: 2px solid var(--line);
+  background: var(--line);
+}
+
+.event-timing > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 6px;
+  background: #f7fffb;
+}
+
+.event-timing span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.event-timing strong {
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .event-errors {
   padding: 8px 10px;
   border-top: 2px solid var(--line);
@@ -726,5 +755,9 @@ body.recording .mic-button {
 
   .activity-tray {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .event-timing {
+    grid-template-columns: repeat(3, minmax(58px, 1fr));
   }
 }
