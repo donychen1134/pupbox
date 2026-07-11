@@ -136,6 +136,14 @@ function renderEvent(event) {
   if (timings.audio_duration_ms) {
     meta.append(eventBadge(`录音 ${formatDuration(timings.audio_duration_ms)}`, ""));
   }
+  if (timings.stt_audio_duration_ms) {
+    let label = `STT 输入 ${formatDuration(timings.stt_audio_duration_ms)}`;
+    if (timings.stt_trimmed_ms && timings.audio_duration_ms) {
+      const ratio = Math.round((timings.stt_trimmed_ms / timings.audio_duration_ms) * 100);
+      label += ` · 裁剪 ${Math.max(0, Math.min(100, ratio))}%`;
+    }
+    meta.append(eventBadge(label, ""));
+  }
   if (event.tts_cache) meta.append(eventBadge(`TTS ${event.tts_cache}`, ""));
 
   const body = document.createElement("div");

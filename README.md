@@ -113,6 +113,7 @@ When exposing Pupbox outside localhost, set an access token:
 export PUPBOX_ACCESS_TOKEN=<url-safe-random-token>
 export PUPBOX_EVENT_LOG_PATH=/var/lib/pupbox/events.jsonl
 export PUPBOX_EVENT_LOG_LIMIT=500
+export PUPBOX_STT_TRIM_SILENCE=true
 export PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
 export PUPBOX_TTS_CACHE_LIMIT=512
 export PUPBOX_TTS_PREWARM=true
@@ -248,7 +249,7 @@ If your DashScope workspace requires the newer workspace-specific domain, set:
 export PUPBOX_DASHSCOPE_BASE_URL=https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com
 ```
 
-The browser records 16 kHz mono WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL and reduces upload size. Recordings shorter than about 260 ms are ignored locally instead of being sent to STT. The browser pages show recording duration and a simple level meter so parent testing can spot short or quiet recordings.
+The browser records 16 kHz mono WAV audio before upload so Qwen-ASR can receive `data:audio/wav;base64,...` input directly. This avoids needing a public recording URL and reduces upload size. Recordings shorter than about 260 ms are ignored locally instead of being sent to STT. With `PUPBOX_STT_TRIM_SILENCE=true` (the default), the server conservatively removes leading and trailing silence only from the STT input while preserving the original diagnostic recording. Uncertain, very soft, isolated, or low-savings detections fall back to the original WAV.
 
 Optional diagnostic recording playback is disabled unless `PUPBOX_RECORDING_DIR` is set. When enabled, recent uploads are stored as short-retention files protected by the same access token; do not use this for long-term storage.
 
@@ -307,6 +308,8 @@ Voice and chat responses include timing diagnostics:
     "playback_ms": 2840,
     "turn_total_ms": 4970,
     "audio_duration_ms": 1100,
+    "stt_audio_duration_ms": 820,
+    "stt_trimmed_ms": 280,
     "audio_peak": 0.32,
     "audio_rms": 0.04,
     "audio_bytes": 18244
@@ -314,7 +317,7 @@ Voice and chat responses include timing diagnostics:
 }
 ```
 
-`GET /api/events?limit=50` returns newest-first persisted conversation diagnostics from the JSONL event log. The parent page uses this as its single history view rather than rendering a second chronological transcript. It highlights recording duration and the wait from button release to first audio, alongside upload/STT/Qwen/TTS/playback timings, TTS cache source, provider errors, safety and activity routes, and protected diagnostic recordings. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
+`GET /api/events?limit=50` returns newest-first persisted conversation diagnostics from the JSONL event log. The parent page uses this as its single history view rather than rendering a second chronological transcript. It highlights recording duration, STT input duration and trim ratio, and the wait from button release to first audio, alongside upload/STT/Qwen/TTS/playback timings, TTS cache source, provider errors, safety and activity routes, and protected diagnostic recordings. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
 
 ## Local Automation
 

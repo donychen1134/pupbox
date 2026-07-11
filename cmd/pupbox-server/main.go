@@ -33,6 +33,7 @@ func main() {
 		EventLogLimit:    envInt("PUPBOX_EVENT_LOG_LIMIT", 500),
 		RecordingDir:     os.Getenv("PUPBOX_RECORDING_DIR"),
 		RecordingLimit:   envInt("PUPBOX_RECORDING_LIMIT", 20),
+		TrimSTTSilence:   envBool("PUPBOX_STT_TRIM_SILENCE", true),
 		SpeechCacheDir:   envDefault("PUPBOX_TTS_CACHE_DIR", "data/tts-cache"),
 		SpeechCacheLimit: envInt("PUPBOX_TTS_CACHE_LIMIT", 512),
 		Logger:           logger,

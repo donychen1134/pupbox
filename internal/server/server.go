@@ -35,6 +35,7 @@ type Server struct {
 	accessToken string
 	events      *EventStore
 	recordings  *RecordingStore
+	trimSTT     bool
 	sessions    *SessionStore
 	speechMu    sync.Mutex
 	speechCache map[string]cachedSpeech
@@ -95,6 +96,7 @@ type Config struct {
 	EventLogLimit    int
 	RecordingDir     string
 	RecordingLimit   int
+	TrimSTTSilence   bool
 	SpeechCacheDir   string
 	SpeechCacheLimit int
 	Logger           *slog.Logger
@@ -135,6 +137,7 @@ func New(cfg Config) *Server {
 		accessToken: strings.TrimSpace(cfg.AccessToken),
 		events:      events,
 		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
+		trimSTT:     cfg.TrimSTTSilence,
 		sessions:    NewSessionStore(128, 6, 15*time.Minute),
 		speechCache: make(map[string]cachedSpeech),
 		speechDisk:  speechDisk,
@@ -221,6 +224,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"voice_provider":    s.voiceProvider(),
 		"chat_model":        s.modelName("chat"),
 		"stt_model":         s.modelName("stt"),
+		"stt_trim_silence":  s.trimSTT,
 		"tts_model":         s.modelName("tts"),
 		"tts_voice":         s.modelName("voice"),
 		"tts_format":        s.modelName("format"),
@@ -520,8 +524,19 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 	transcript := "我想听一个小狗故事"
 	var sttErr error
 	if s.useVoice {
+		sttData := data
+		if s.trimSTT {
+			if trimmed, trim, ok := trimWAVSilence(data); ok {
+				timings.STTAudioDurationMS = trim.InputDurationMS
+				timings.STTTrimmedMS = trim.TrimmedMS
+				sttData = trimmed
+			}
+		}
+		if timings.STTAudioDurationMS == 0 {
+			timings.STTAudioDurationMS = timings.AudioDurationMS
+		}
 		sttStarted := time.Now()
-		transcript, sttErr = s.voice.Transcribe(r.Context(), data, filename, contentType)
+		transcript, sttErr = s.voice.Transcribe(r.Context(), sttData, filename, contentType)
 		timings.STTMS = elapsedMS(sttStarted)
 		if sttErr != nil {
 			timings.TotalMS = elapsedMS(started)
@@ -1061,19 +1076,21 @@ type chatResponse struct {
 }
 
 type TimingStats struct {
-	TotalMS         int64   `json:"total_ms"`
-	UploadMS        int64   `json:"upload_ms,omitempty"`
-	STTMS           int64   `json:"stt_ms"`
-	ReplyMS         int64   `json:"reply_ms"`
-	TTSMS           int64   `json:"tts_ms"`
-	TTSFirstAudioMS int64   `json:"tts_first_audio_ms,omitempty"`
-	VoiceResponseMS int64   `json:"voice_response_ms,omitempty"`
-	PlaybackMS      int64   `json:"playback_ms,omitempty"`
-	TurnTotalMS     int64   `json:"turn_total_ms,omitempty"`
-	AudioBytes      int64   `json:"audio_bytes,omitempty"`
-	AudioDurationMS int64   `json:"audio_duration_ms,omitempty"`
-	AudioPeak       float64 `json:"audio_peak,omitempty"`
-	AudioRMS        float64 `json:"audio_rms,omitempty"`
+	TotalMS            int64   `json:"total_ms"`
+	UploadMS           int64   `json:"upload_ms,omitempty"`
+	STTMS              int64   `json:"stt_ms"`
+	ReplyMS            int64   `json:"reply_ms"`
+	TTSMS              int64   `json:"tts_ms"`
+	TTSFirstAudioMS    int64   `json:"tts_first_audio_ms,omitempty"`
+	VoiceResponseMS    int64   `json:"voice_response_ms,omitempty"`
+	PlaybackMS         int64   `json:"playback_ms,omitempty"`
+	TurnTotalMS        int64   `json:"turn_total_ms,omitempty"`
+	AudioBytes         int64   `json:"audio_bytes,omitempty"`
+	AudioDurationMS    int64   `json:"audio_duration_ms,omitempty"`
+	STTAudioDurationMS int64   `json:"stt_audio_duration_ms,omitempty"`
+	STTTrimmedMS       int64   `json:"stt_trimmed_ms,omitempty"`
+	AudioPeak          float64 `json:"audio_peak,omitempty"`
+	AudioRMS           float64 `json:"audio_rms,omitempty"`
 }
 
 func validClientTiming(value int64) bool {
@@ -1123,53 +1140,24 @@ func wavDurationMS(data []byte) (int64, bool) {
 }
 
 func wavAudioStats(data []byte) (AudioStats, bool) {
-	if len(data) < 44 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
+	wav, ok := parsePCMWAV(data)
+	if !ok {
 		return AudioStats{}, false
 	}
-
-	var audioFormat, channels, bitsPerSample uint16
-	var sampleRate uint32
-	var pcm []byte
-	for offset := 12; offset+8 <= len(data); {
-		chunkID := string(data[offset : offset+4])
-		chunkSize := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
-		body := offset + 8
-		if body+chunkSize > len(data) {
-			return AudioStats{}, false
-		}
-		switch chunkID {
-		case "fmt ":
-			if chunkSize >= 16 {
-				audioFormat = binary.LittleEndian.Uint16(data[body : body+2])
-				channels = binary.LittleEndian.Uint16(data[body+2 : body+4])
-				sampleRate = binary.LittleEndian.Uint32(data[body+4 : body+8])
-				bitsPerSample = binary.LittleEndian.Uint16(data[body+14 : body+16])
-			}
-		case "data":
-			pcm = data[body : body+chunkSize]
-		}
-		offset = body + chunkSize
-		if offset%2 == 1 {
-			offset++
-		}
-	}
-	if audioFormat != 1 || channels == 0 || bitsPerSample == 0 || sampleRate == 0 || len(pcm) == 0 {
-		return AudioStats{}, false
-	}
-	bytesPerSecond := int64(sampleRate) * int64(channels) * int64(bitsPerSample) / 8
+	bytesPerSecond := int64(wav.SampleRate) * int64(wav.Channels) * int64(wav.BitsPerSample) / 8
 	if bytesPerSecond <= 0 {
 		return AudioStats{}, false
 	}
 	stats := AudioStats{
-		DurationMS: int64(len(pcm)) * 1000 / bytesPerSecond,
+		DurationMS: int64(len(wav.PCM)) * 1000 / bytesPerSecond,
 	}
-	if bitsPerSample != 16 {
+	if wav.BitsPerSample != 16 {
 		return stats, true
 	}
 	var sumSquares float64
 	var samples int
-	for offset := 0; offset+2 <= len(pcm); offset += 2 {
-		sample := float64(int16(binary.LittleEndian.Uint16(pcm[offset:offset+2]))) / 32768
+	for offset := 0; offset+2 <= len(wav.PCM); offset += 2 {
+		sample := float64(int16(binary.LittleEndian.Uint16(wav.PCM[offset:offset+2]))) / 32768
 		abs := math.Abs(sample)
 		if abs > stats.Peak {
 			stats.Peak = abs
