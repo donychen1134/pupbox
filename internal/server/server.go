@@ -159,6 +159,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/recordings/", s.requireAccess(s.handleRecording))
 	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
 	s.mux.HandleFunc("POST /api/speech", s.requireAccess(s.handleSpeech))
+	s.mux.HandleFunc("POST /api/speech-audio", s.requireAccess(s.handleSpeechAudio))
 	s.mux.HandleFunc("POST /api/speech-stream", s.requireAccess(s.handleSpeechStream))
 	s.mux.HandleFunc("POST /api/turn-metrics", s.requireAccess(s.handleTurnMetrics))
 	s.mux.HandleFunc("POST /api/voice", s.requireAccess(s.handleVoice))
@@ -346,6 +347,39 @@ func (s *Server) handleSpeech(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(err),
 		Timings:     timings,
 	})
+}
+
+func (s *Server) handleSpeechAudio(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	var req speechRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	text := dog.ClampReply(strings.TrimSpace(req.Text), 90)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+	if !s.useVoice {
+		writeError(w, http.StatusServiceUnavailable, "server voice mode is not enabled")
+		return
+	}
+	audio, mime, err := s.synthesizeSpeech(r.Context(), text)
+	if err != nil {
+		s.log.Warn("complete speech audio failed", "error", err)
+		writeError(w, http.StatusBadGateway, "speech synthesis failed")
+		return
+	}
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Length", strconv.Itoa(len(audio)))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Pupbox-TTS-MS", strconv.FormatInt(elapsedMS(started), 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(audio)
 }
 
 func (s *Server) handleSpeechStream(w http.ResponseWriter, r *http.Request) {

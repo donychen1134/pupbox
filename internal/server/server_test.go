@@ -48,6 +48,7 @@ func TestAccessTokenProtectsAPIs(t *testing.T) {
 		{name: "recordings", method: http.MethodGet, path: "/api/recordings/abcd"},
 		{name: "chat", method: http.MethodPost, path: "/api/chat", body: `{"text":"嗯嗯"}`},
 		{name: "speech", method: http.MethodPost, path: "/api/speech", body: `{"text":"汪。"}`},
+		{name: "speech audio", method: http.MethodPost, path: "/api/speech-audio", body: `{"text":"汪。"}`},
 		{name: "speech stream", method: http.MethodPost, path: "/api/speech-stream", body: `{"text":"汪。"}`},
 		{name: "turn metrics", method: http.MethodPost, path: "/api/turn-metrics", body: `{"trace_id":"trace-1"}`},
 		{name: "voice", method: http.MethodPost, path: "/api/voice"},
@@ -121,6 +122,28 @@ func TestSpeechCachesTTS(t *testing.T) {
 
 	if calls := voice.speakCalls.Load(); calls != 1 {
 		t.Fatalf("speakCalls = %d, want 1", calls)
+	}
+}
+
+func TestSpeechAudioReturnsBinaryPayload(t *testing.T) {
+	voice := &countingVoiceProvider{}
+	srv := New(Config{Voice: voice})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/speech-audio", strings.NewReader(`{"text":"豆豆讲故事"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "audio/wav" {
+		t.Fatalf("content type = %q, want audio/wav", got)
+	}
+	if got, want := rec.Body.String(), "audio:豆豆讲故事"; got != want {
+		t.Fatalf("audio = %q, want %q", got, want)
+	}
+	if rec.Header().Get("X-Pupbox-TTS-MS") == "" {
+		t.Fatal("missing TTS timing header")
 	}
 }
 

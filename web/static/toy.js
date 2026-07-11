@@ -296,7 +296,8 @@ async function handleDogResponse(payload, turn = {}) {
     played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
     playbackMS = elapsedClientMS(playbackStartedAt);
   } else if (hasServerVoice() && state.health?.tts_streaming) {
-    streamResult = await playSpeechStream(reply, () => {
+    const playServerAudio = payload.activity?.id === "story" ? playSpeechFile : playSpeechStream;
+    streamResult = await playServerAudio(reply, () => {
       playbackStartedAt = performance.now();
       setPhase("speaking", speakingState, "等一下");
     });
@@ -322,6 +323,37 @@ async function handleDogResponse(payload, turn = {}) {
     tts_cache: streamResult.cache || (played ? "complete" : "browser-fallback"),
     playback_error: streamResult.error || "",
   });
+}
+
+async function playSpeechFile(text, onPlaybackReady) {
+  const requestStartedAt = performance.now();
+  try {
+    const response = await fetch("/api/speech-audio", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      return { played: false, error: `speech audio HTTP ${response.status}` };
+    }
+    const responseAt = performance.now();
+    const blob = await response.blob();
+    const playbackStartedAt = performance.now();
+    onPlaybackReady?.();
+    const played = await playAudioBlob(blob);
+    return {
+      played,
+      ttsFirstAudioMS: Math.max(0, Math.round(responseAt - requestStartedAt)),
+      ttsMS: Number(response.headers.get("X-Pupbox-TTS-MS")) || 0,
+      playbackMS: elapsedClientMS(playbackStartedAt),
+      audioUnderruns: 0,
+      audioUnderrunMS: 0,
+      cache: "complete-binary",
+      error: played ? "" : "speech audio playback failed",
+    };
+  } catch (error) {
+    return { played: false, error: error?.message || String(error) };
+  }
 }
 
 async function playSpeechStream(text, onFirstAudio) {
@@ -862,7 +894,11 @@ function speakInBrowser(text) {
 
 function playBase64Audio(base64, mimeType) {
   const bytes = decodeBase64Bytes(base64);
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+  return playAudioBlob(new Blob([bytes], { type: mimeType }));
+}
+
+function playAudioBlob(blob) {
+  const url = URL.createObjectURL(blob);
   const audio = audioPlayer();
   if (state.audioObjectURL) URL.revokeObjectURL(state.audioObjectURL);
   state.audioObjectURL = url;
@@ -938,4 +974,4 @@ function reportTurnMetrics(traceID, metrics) {
   }).catch(() => {});
 }
 
-export { createPCMPlayer };
+export { createPCMPlayer, playSpeechFile };
