@@ -113,8 +113,21 @@ func contextualInput(history []dog.Turn, current string) string {
 	for _, turn := range history {
 		fmt.Fprintf(&builder, "小朋友：%s\n豆豆：%s\n", turn.User, turn.Reply)
 	}
+	repeats := 0
+	for _, turn := range history {
+		if normalizeForRepeat(turn.User) == normalizeForRepeat(current) {
+			repeats++
+		}
+	}
+	if repeats > 0 {
+		fmt.Fprintf(&builder, "提醒：小朋友最近已经问过这句话 %d 次。请换一个具体答案和句式，不要重复之前豆豆的回答。\n", repeats)
+	}
 	fmt.Fprintf(&builder, "小朋友现在说：%s", current)
 	return builder.String()
+}
+
+func normalizeForRepeat(value string) string {
+	return strings.NewReplacer(" ", "", "，", "", ",", "", "。", "", ".", "", "？", "", "?", "", "！", "", "!", "").Replace(strings.TrimSpace(value))
 }
 
 func truncateText(value string, maxRunes int) string {

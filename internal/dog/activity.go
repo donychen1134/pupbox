@@ -14,6 +14,7 @@ var activitySequences = map[string]*atomic.Uint64{
 	"sound_game":   {},
 	"clap":         {},
 	"comfort":      {},
+	"presence":     {},
 }
 
 var babbleSequence atomic.Uint64
@@ -86,6 +87,14 @@ func Activities() []Activity {
 			Action:   "tail_wag",
 		},
 		{
+			ID:       "presence",
+			Label:    "陪伴",
+			Prompt:   "豆豆在做什么",
+			Reply:    "豆豆正趴着听你说话呢。小尾巴还在轻轻摇。",
+			Category: "chat",
+			Action:   "tail_wag",
+		},
+		{
 			ID:       "comfort",
 			Label:    "抱抱",
 			Prompt:   "豆豆抱抱",
@@ -110,9 +119,12 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "背唐诗", "背古诗", "念唐诗", "念古诗", "读唐诗", "读古诗", "来首唐诗", "来一首唐诗") ||
 		equalsAny(normalized, "唐诗", "古诗", "背诗"):
 		return byID("poem")
-	case containsAny(normalized, "讲故事", "讲个故事", "听故事", "说故事", "小狗故事", "再讲一个故事", "讲个古事", "讲个古是", "讲个鼓事", "讲个故是") ||
+	case containsAny(normalized, "讲故事", "讲个故事", "听故事", "说故事", "小狗故事", "新故事", "再讲一个故事", "讲个古事", "讲个古是", "讲个鼓事", "讲个故是") ||
 		equalsAny(normalized, "故事", "古事", "古是", "鼓事", "故是"):
 		return byID("story")
+	case containsAny(normalized, "你在干什么", "你在干啥", "你干什么呢", "你干啥呢", "你干嘛呢") ||
+		equalsAny(normalized, "你干什么", "你干啥", "你干嘛", "干啥呢"):
+		return byID("presence")
 	case containsAny(normalized, "猜动物", "猜小动物", "动物游戏", "猜谜语", "猜个谜") ||
 		equalsAny(normalized, "动物", "小动物", "猜谜", "谜语"):
 		return byID("animal_guess")
@@ -135,6 +147,24 @@ func PlanActivity(text string) (Activity, bool) {
 	default:
 		return Activity{}, false
 	}
+}
+
+// PlanActivityWithHistory resolves short follow-ups that only make sense after a previous turn.
+func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
+	if activity, ok := PlanActivity(text); ok {
+		return activity, true
+	}
+	normalized := stripDogAddress(normalizeToddlerIntentText(text))
+	if !equalsAny(normalized, "再讲一个", "再来一个", "讲一个新的", "讲个新的", "换一个") {
+		return Activity{}, false
+	}
+	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
+		previous := normalizeToddlerIntentText(history[i].User)
+		if containsAny(previous, "故事", "古事", "古是", "鼓事", "故是") {
+			return byID("story")
+		}
+	}
+	return Activity{}, false
 }
 
 func stripDogAddress(text string) string {
@@ -282,6 +312,7 @@ func PrewarmReplies() []string {
 		"sound_game",
 		"clap",
 		"comfort",
+		"presence",
 	} {
 		for _, reply := range activityReplyVariants[id] {
 			appendReply(reply)
@@ -356,5 +387,13 @@ var activityReplyVariants = map[string][]string{
 		"想哭也没关系。先找爸爸妈妈抱一抱，豆豆会安静地陪着你。",
 		"我们把小手放在肚子上，慢慢吸气，慢慢呼气。豆豆陪你一起。",
 		"害怕的时候要找爸爸妈妈。豆豆也会守在这里，轻轻摇尾巴。",
+	},
+	"presence": {
+		"豆豆正趴着听你说话呢。小尾巴还在轻轻摇。",
+		"豆豆在看你呀，还偷偷摇了两下尾巴。",
+		"豆豆在等你聊天呢。现在耳朵竖得高高的。",
+		"豆豆刚刚在数自己的小爪子，一、二、三、四。",
+		"豆豆在想一朵云像不像棉花糖。你觉得呢？",
+		"豆豆在练习小小声地汪，怕吵到你呀。",
 	},
 }

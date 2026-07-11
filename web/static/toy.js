@@ -317,6 +317,8 @@ async function handleDogResponse(payload, turn = {}) {
     tts_ms: streamResult.ttsMS || payload.timings?.tts_ms || 0,
     playback_ms: playbackMS,
     turn_total_ms: turnTotalMS,
+    audio_underruns: streamResult.audioUnderruns || 0,
+    audio_underrun_ms: streamResult.audioUnderrunMS || 0,
     tts_cache: streamResult.cache || (played ? "complete" : "browser-fallback"),
     playback_error: streamResult.error || "",
   });
@@ -388,7 +390,11 @@ async function playSpeechStream(text, onFirstAudio) {
     streamError = error?.message || String(error);
     reader?.cancel().catch(() => {});
   }
-  if (pcmPlayer) await pcmPlayer.finish();
+  let pcmStats = {};
+  if (pcmPlayer) {
+    await pcmPlayer.finish();
+    pcmStats = pcmPlayer.stats();
+  }
   if (completePlayback.length) {
     const results = await Promise.all(completePlayback);
     if (!pcmPlayer && !results.some(Boolean)) started = false;
@@ -398,6 +404,8 @@ async function playSpeechStream(text, onFirstAudio) {
     ttsFirstAudioMS: firstAudioAt ? Math.max(0, Math.round(firstAudioAt - requestStartedAt)) : 0,
     ttsMS,
     playbackMS: firstAudioAt ? elapsedClientMS(firstAudioAt) : 0,
+    audioUnderruns: pcmStats.underruns || 0,
+    audioUnderrunMS: pcmStats.underrunMS || 0,
     cache,
     error: streamError,
   };
@@ -406,7 +414,12 @@ async function playSpeechStream(text, onFirstAudio) {
 function createPCMPlayer(sampleRate) {
   const context = unlockFeedbackAudio();
   if (!context) return null;
-  let nextStart = context.currentTime + 0.18;
+  const initialBufferSeconds = 0.42;
+  const recoveryBufferSeconds = 0.06;
+  let nextStart = 0;
+  let scheduled = false;
+  let underruns = 0;
+  let underrunMS = 0;
   let pending = 0;
   let finished = false;
   let leftover = null;
@@ -445,7 +458,17 @@ function createPCMPlayer(sampleRate) {
       const source = context.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioOutput(context));
-      const startAt = Math.max(nextStart, context.currentTime + 0.03);
+      let startAt;
+      if (!scheduled) {
+        startAt = context.currentTime + initialBufferSeconds;
+        scheduled = true;
+      } else if (nextStart <= context.currentTime) {
+        startAt = context.currentTime + recoveryBufferSeconds;
+        underruns += 1;
+        underrunMS += Math.max(0, Math.round((startAt - nextStart) * 1000));
+      } else {
+        startAt = nextStart;
+      }
       pending += 1;
       source.addEventListener("ended", () => {
         pending -= 1;
@@ -464,6 +487,9 @@ function createPCMPlayer(sampleRate) {
       finished = true;
       finishIfReady();
       return finishedPromise;
+    },
+    stats() {
+      return { underruns, underrunMS };
     },
   };
 }

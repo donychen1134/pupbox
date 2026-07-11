@@ -556,6 +556,12 @@ body.recording .mic-button {
   color: var(--teal);
 }
 
+.event-badge.warning {
+  color: #8a3b12;
+  background: #fff1e6;
+  border-color: #f1c4a8;
+}
+
 .event-body {
   display: grid;
   gap: 8px;

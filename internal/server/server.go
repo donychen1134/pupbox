@@ -599,7 +599,8 @@ func (s *Server) handleTurnMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validClientTiming(req.VoiceResponseMS) || !validClientTiming(req.TTSFirstAudioMS) ||
-		!validClientTiming(req.TTSMS) || !validClientTiming(req.PlaybackMS) || !validClientTiming(req.TurnTotalMS) {
+		!validClientTiming(req.TTSMS) || !validClientTiming(req.PlaybackMS) || !validClientTiming(req.TurnTotalMS) ||
+		!validClientTiming(req.AudioUnderrunMS) || req.AudioUnderruns < 0 || req.AudioUnderruns > 1000 {
 		writeError(w, http.StatusBadRequest, "invalid timing value")
 		return
 	}
@@ -615,6 +616,8 @@ func (s *Server) handleTurnMetrics(w http.ResponseWriter, r *http.Request) {
 		event.Timings.TTSMS = req.TTSMS
 		event.Timings.PlaybackMS = req.PlaybackMS
 		event.Timings.TurnTotalMS = req.TurnTotalMS
+		event.Timings.AudioUnderruns = req.AudioUnderruns
+		event.Timings.AudioUnderrunMS = req.AudioUnderrunMS
 		event.TTSCache = cache
 		if playbackError != "" {
 			if event.Errors == nil {
@@ -687,7 +690,7 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 		return safety.Reply, safety, nil, "safety", nil
 	}
 
-	if activity, ok := dog.PlanActivity(text); ok {
+	if activity, ok := dog.PlanActivityWithHistory(text, history); ok {
 		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 	}
 
@@ -759,6 +762,19 @@ type speechStreamCache struct {
 const streamAudioChunkBytes = 8 << 10
 
 func (s *Server) cachedSpeechForStream(text string) ([]byte, string, speechStreamCache, bool) {
+	if streaming, ok := s.voice.(StreamingVoiceProvider); ok {
+		sampleRate := streaming.StreamSampleRate()
+		streamKey := s.streamSpeechCacheKey(text, sampleRate)
+		if audio, mime, found, err := s.speechDisk.Get(streamKey); found {
+			return audio, mime, speechStreamCache{kind: "stream", sampleRate: sampleRate}, true
+		} else if err != nil {
+			s.log.Warn("failed to read streaming speech cache", "error", err)
+		}
+		// A complete MP3 cannot be decoded progressively in Safari. On a stream cache
+		// miss, synthesize PCM so playback can start before the whole reply arrives.
+		return nil, "", speechStreamCache{}, false
+	}
+
 	key := s.speechCacheKey(text)
 	s.speechMu.Lock()
 	if cached, ok := s.speechCache[key]; ok {
@@ -783,17 +799,6 @@ func (s *Server) cachedSpeechForStream(text string) ([]byte, string, speechStrea
 		s.log.Warn("failed to read complete speech cache for stream", "error", err)
 	}
 
-	streaming, ok := s.voice.(StreamingVoiceProvider)
-	if !ok {
-		return nil, "", speechStreamCache{}, false
-	}
-	sampleRate := streaming.StreamSampleRate()
-	streamKey := s.streamSpeechCacheKey(text, sampleRate)
-	if audio, mime, ok, err := s.speechDisk.Get(streamKey); ok {
-		return audio, mime, speechStreamCache{kind: "stream", sampleRate: sampleRate}, true
-	} else if err != nil {
-		s.log.Warn("failed to read streaming speech cache", "error", err)
-	}
 	return nil, "", speechStreamCache{}, false
 }
 
@@ -1038,6 +1043,8 @@ type turnMetricsRequest struct {
 	TTSMS           int64  `json:"tts_ms"`
 	PlaybackMS      int64  `json:"playback_ms"`
 	TurnTotalMS     int64  `json:"turn_total_ms"`
+	AudioUnderruns  int64  `json:"audio_underruns"`
+	AudioUnderrunMS int64  `json:"audio_underrun_ms"`
 	TTSCache        string `json:"tts_cache"`
 	PlaybackError   string `json:"playback_error"`
 }
@@ -1085,6 +1092,8 @@ type TimingStats struct {
 	VoiceResponseMS    int64   `json:"voice_response_ms,omitempty"`
 	PlaybackMS         int64   `json:"playback_ms,omitempty"`
 	TurnTotalMS        int64   `json:"turn_total_ms,omitempty"`
+	AudioUnderruns     int64   `json:"audio_underruns,omitempty"`
+	AudioUnderrunMS    int64   `json:"audio_underrun_ms,omitempty"`
 	AudioBytes         int64   `json:"audio_bytes,omitempty"`
 	AudioDurationMS    int64   `json:"audio_duration_ms,omitempty"`
 	STTAudioDurationMS int64   `json:"stt_audio_duration_ms,omitempty"`

@@ -136,6 +136,35 @@ func TestStoryActivityRotatesContent(t *testing.T) {
 	}
 }
 
+func TestStoryFollowUpUsesRecentHistory(t *testing.T) {
+	history := []Turn{{User: "你给我讲个故事吧", Reply: "从前有一只小狗。"}}
+	activity, ok := PlanActivityWithHistory("再讲一个", history)
+	if !ok || activity.ID != "story" {
+		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
+	}
+}
+
+func TestStoryFollowUpWithoutStoryContextUsesModel(t *testing.T) {
+	history := []Turn{{User: "唱首歌", Reply: "啦啦啦。"}}
+	if activity, ok := PlanActivityWithHistory("再来一个", history); ok {
+		t.Fatalf("activity = %#v, want model routing", activity)
+	}
+}
+
+func TestPresenceActivityRotatesContent(t *testing.T) {
+	seen := make(map[string]bool)
+	for range 3 {
+		activity, ok := PlanActivity("你干啥呢")
+		if !ok || activity.ID != "presence" {
+			t.Fatalf("unexpected activity: %#v ok=%v", activity, ok)
+		}
+		seen[activity.Reply] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("presence replies did not rotate: %#v", seen)
+	}
+}
+
 func TestPrewarmRepliesAreUniqueAndCoverReviewedActivities(t *testing.T) {
 	replies := PrewarmReplies()
 	if len(replies) < 50 {

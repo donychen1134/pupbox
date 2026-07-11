@@ -172,6 +172,23 @@ func TestSpeechStreamEmitsChunksAndPersistsCache(t *testing.T) {
 	}
 }
 
+func TestSpeechStreamPrefersProgressivePCMOverCompleteCache(t *testing.T) {
+	dir := t.TempDir()
+	voice := &testStreamingVoiceProvider{chunks: [][]byte{bytes.Repeat([]byte{1}, 1024)}}
+	srv := New(Config{Voice: voice, SpeechCacheDir: dir})
+	if _, _, err := srv.synthesizeSpeech(context.Background(), "一个较长的故事"); err != nil {
+		t.Fatal(err)
+	}
+
+	events := requestSpeechStream(t, srv, "一个较长的故事")
+	if len(events) != 2 || events[0].AudioMIME != "audio/pcm" || events[0].Cache != "miss" {
+		t.Fatalf("events = %#v, want progressive PCM miss", events)
+	}
+	if calls := voice.streamCalls.Load(); calls != 1 {
+		t.Fatalf("stream calls = %d, want 1", calls)
+	}
+}
+
 func speechStreamEventTypes(events []speechStreamEvent) []string {
 	types := make([]string, 0, len(events))
 	for _, event := range events {
@@ -394,6 +411,8 @@ func TestTurnMetricsUpdatesPersistedConversation(t *testing.T) {
 		TTSMS:           1270,
 		PlaybackMS:      2420,
 		TurnTotalMS:     3912,
+		AudioUnderruns:  2,
+		AudioUnderrunMS: 143,
 		TTSCache:        "miss",
 	}
 	body, err := json.Marshal(metrics)
@@ -420,7 +439,8 @@ func TestTurnMetricsUpdatesPersistedConversation(t *testing.T) {
 		t.Fatalf("conversation identity changed: %+v", event)
 	}
 	if event.Timings.VoiceResponseMS != 824 || event.Timings.TTSFirstAudioMS != 431 ||
-		event.Timings.TTSMS != 1270 || event.Timings.PlaybackMS != 2420 || event.Timings.TurnTotalMS != 3912 {
+		event.Timings.TTSMS != 1270 || event.Timings.PlaybackMS != 2420 || event.Timings.TurnTotalMS != 3912 ||
+		event.Timings.AudioUnderruns != 2 || event.Timings.AudioUnderrunMS != 143 {
 		t.Fatalf("turn timings = %+v", event.Timings)
 	}
 	if event.TTSCache != "miss" {

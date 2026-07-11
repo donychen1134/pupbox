@@ -145,6 +145,9 @@ function renderEvent(event) {
     meta.append(eventBadge(label, ""));
   }
   if (event.tts_cache) meta.append(eventBadge(`TTS ${event.tts_cache}`, ""));
+  if (timings.audio_underruns) {
+    meta.append(eventBadge(`断流 ${timings.audio_underruns} 次 · ${formatDuration(timings.audio_underrun_ms)}`, "warning"));
+  }
 
   const body = document.createElement("div");
   body.className = "event-body";
