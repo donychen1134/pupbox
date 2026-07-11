@@ -215,6 +215,9 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if isStoryAffirmation(normalized) && (hasPendingStoryOffer(history) || hasRecentActivity(history, "story")) {
 		return activityWithHistory("story", history)
 	}
+	if activity, ok := continueRecentActivity(normalized, history); ok {
+		return activity, true
+	}
 	if activity, ok := PlanActivity(text); ok {
 		if activity.ID == "story" {
 			activity.Reply = randomReplyExcluding("story", history, activity.Reply)
@@ -231,6 +234,151 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 		}
 	}
 	return Activity{}, false
+}
+
+func continueRecentActivity(text string, history []Turn) (Activity, bool) {
+	if text == "" || len(history) == 0 {
+		return Activity{}, false
+	}
+	previous := history[len(history)-1]
+	switch previous.ActivityID {
+	case "adventure":
+		return continueAdventure(text)
+	case "pretend_play":
+		return continuePretendPlay(text)
+	case "magic":
+		return continueMagic(text)
+	case "animal_guess":
+		return continueAnimalGuess(text, previous.Reply)
+	case "color_hunt":
+		if matchesShortChoice(text, "找到了", "找到啦", "在这里", "有一个") {
+			return fixedActivity("color_hunt", activityContinuationReplies["color_hunt"][0])
+		}
+	}
+	return Activity{}, false
+}
+
+func continueAdventure(text string) (Activity, bool) {
+	replies := activityContinuationReplies["adventure"]
+	switch {
+	case matchesShortChoice(text, "海边", "大海"):
+		return fixedActivity("adventure", replies[0])
+	case matchesShortChoice(text, "森林", "树林"):
+		return fixedActivity("adventure", replies[1])
+	case matchesShortChoice(text, "小鱼", "跟小鱼"):
+		return fixedActivity("adventure", replies[2])
+	case matchesShortChoice(text, "小岛", "找小岛"):
+		return fixedActivity("adventure", replies[3])
+	case matchesShortChoice(text, "彩虹", "彩虹桥"):
+		return fixedActivity("adventure", replies[4])
+	case matchesShortChoice(text, "月亮", "月亮路"):
+		return fixedActivity("adventure", replies[5])
+	case matchesShortChoice(text, "糖果", "糖果城"):
+		return fixedActivity("adventure", replies[6])
+	case matchesShortChoice(text, "积木", "积木森林"):
+		return fixedActivity("adventure", replies[7])
+	case matchesShortChoice(text, "贝壳", "捡贝壳"):
+		return fixedActivity("adventure", replies[8])
+	case matchesShortChoice(text, "沙堡", "堆沙堡"):
+		return fixedActivity("adventure", replies[9])
+	case matchesShortChoice(text, "小兔", "兔子", "找小兔"):
+		return fixedActivity("adventure", replies[10])
+	case matchesShortChoice(text, "小鹿", "鹿", "找小鹿"):
+		return fixedActivity("adventure", replies[11])
+	case matchesShortChoice(text, "红色", "踩红色"):
+		return fixedActivity("adventure", replies[12])
+	case matchesShortChoice(text, "蓝色", "踩蓝色"):
+		return fixedActivity("adventure", replies[13])
+	case matchesShortChoice(text, "草莓门", "草莓"):
+		return fixedActivity("adventure", replies[14])
+	case matchesShortChoice(text, "橘子门", "橘子"):
+		return fixedActivity("adventure", replies[15])
+	case matchesShortChoice(text, "小房子", "房子"):
+		return fixedActivity("adventure", replies[16])
+	case matchesShortChoice(text, "小车", "汽车"):
+		return fixedActivity("adventure", replies[17])
+	default:
+		return Activity{}, false
+	}
+}
+
+func continuePretendPlay(text string) (Activity, bool) {
+	replies := activityContinuationReplies["pretend_play"]
+	choices := [][]string{
+		{"苹果"}, {"草莓"}, {"胡萝卜"}, {"青菜", "小青菜"},
+		{"小兔", "兔子"}, {"小熊", "熊"}, {"面条"}, {"米饭"},
+		{"轻轻的", "轻的"}, {"叮当", "会响的"}, {"圆轮子", "圆的"}, {"方积木", "方的"},
+	}
+	for index, terms := range choices {
+		if matchesShortChoice(text, terms...) {
+			return fixedActivity("pretend_play", replies[index])
+		}
+	}
+	return Activity{}, false
+}
+
+func continueMagic(text string) (Activity, bool) {
+	replies := activityContinuationReplies["magic"]
+	choices := [][]string{
+		{"小雨", "下雨"}, {"花瓣", "下花瓣"}, {"圆面包", "圆的"}, {"星星面包", "星星"},
+		{"喵", "小猫"}, {"汪", "小狗"}, {"变大", "大"}, {"变小", "小"},
+		{"橙色"}, {"蓝泡泡", "蓝色"}, {"粉泡泡", "粉色"},
+	}
+	for index, terms := range choices {
+		if matchesShortChoice(text, terms...) {
+			return fixedActivity("magic", replies[index])
+		}
+	}
+	return Activity{}, false
+}
+
+func continueAnimalGuess(text, previousReply string) (Activity, bool) {
+	type animalRound struct {
+		clue    string
+		answer  string
+		aliases []string
+		reply   string
+	}
+	replies := activityContinuationReplies["animal_guess"]
+	rounds := []animalRound{
+		{clue: "长耳朵", answer: "小兔子", aliases: []string{"兔", "小兔"}, reply: replies[0]},
+		{clue: "圆圆脸", answer: "小猫头鹰", aliases: []string{"猫头鹰"}, reply: replies[1]},
+		{clue: "小房子", answer: "小蜗牛", aliases: []string{"蜗牛"}, reply: replies[2]},
+		{clue: "鼻子长长", answer: "大象", aliases: []string{"大象"}, reply: replies[3]},
+		{clue: "黑白衣", answer: "企鹅", aliases: []string{"企鹅"}, reply: replies[4]},
+		{clue: "小伞", answer: "小松鼠", aliases: []string{"松鼠"}, reply: replies[5]},
+		{clue: "脖子长长", answer: "长颈鹿", aliases: []string{"长颈鹿"}, reply: replies[6]},
+		{clue: "黑白条纹", answer: "斑马", aliases: []string{"斑马"}, reply: replies[7]},
+	}
+	for _, round := range rounds {
+		if !strings.Contains(previousReply, round.clue) {
+			continue
+		}
+		if matchesShortChoice(text, round.aliases...) {
+			return fixedActivity("animal_guess", "猜对啦，是"+round.answer+"。"+round.reply)
+		}
+		if utf8.RuneCountInString(text) <= 6 && containsAny(text, "兔", "鸭", "猫", "羊", "蜗牛", "松鼠", "大象", "斑马", "企鹅", "猴", "河马", "长颈鹿") {
+			return fixedActivity("animal_guess", "这次是"+round.answer+"。"+round.reply)
+		}
+	}
+	return Activity{}, false
+}
+
+func fixedActivity(id, reply string) (Activity, bool) {
+	for _, activity := range Activities() {
+		if activity.ID == id {
+			activity.Reply = reply
+			return activity, true
+		}
+	}
+	return Activity{}, false
+}
+
+func matchesShortChoice(text string, terms ...string) bool {
+	if utf8.RuneCountInString(text) > 10 {
+		return false
+	}
+	return containsAny(text, terms...)
 }
 
 func activityWithHistory(id string, history []Turn) (Activity, bool) {
@@ -432,6 +580,17 @@ func PrewarmReplies() []string {
 		"adventure",
 		"pretend_play",
 		"magic",
+	} {
+		for _, reply := range activityReplyVariants[id] {
+			appendReply(reply)
+		}
+	}
+	for _, id := range []string{"adventure", "pretend_play", "magic", "animal_guess", "color_hunt"} {
+		for _, reply := range activityContinuationReplies[id] {
+			appendReply(reply)
+		}
+	}
+	for _, id := range []string{
 		"poem",
 		"animal_guess",
 		"color_hunt",
@@ -445,6 +604,69 @@ func PrewarmReplies() []string {
 		}
 	}
 	return replies
+}
+
+var activityContinuationReplies = map[string][]string{
+	"adventure": {
+		"海边到啦，浪花哗啦哗啦。我们捡贝壳，还是堆沙堡？",
+		"花花森林到啦，小鸟在唱歌。我们去找小兔，还是找小鹿？",
+		"金色小鱼游得好快，带我们找到一颗亮珍珠。把珍珠送给谁呢？",
+		"小岛上有一棵椰子树，还藏着一个小箱子。我们轻轻打开吧。",
+		"彩虹桥软软的，每走一步就亮一种颜色。你想先踩红色还是蓝色？",
+		"月亮路亮晶晶，前面坐着一只小兔。我们向它说你好吧。",
+		"糖果城到啦，门口有草莓门和橘子门。你来选一扇。",
+		"积木森林里每棵树都能搭起来。我们搭小房子，还是搭小车？",
+		"我们捡到三只贝壳，一只白的，两只黄的。送一只给小螃蟹吧。",
+		"沙堡堆好啦，门口插着一片小树叶。浪花来了，我们向它说你好。",
+		"小兔躲在蘑菇旁边，送给我们一颗红果子。森林朋友找到啦。",
+		"小鹿在小溪边喝水，抬头向我们点点头。我们安静陪它一会儿。",
+		"踩到红色啦，彩虹桥发出咚的一声。我们一步一步走过桥。",
+		"踩到蓝色啦，彩虹桥发出叮的一声。桥那边就是月亮花园。",
+		"草莓门打开啦，里面飘着甜甜的香味。糖果城欢迎你。",
+		"橘子门打开啦，一辆橙色小车来接我们。坐好，嘟嘟出发。",
+		"小房子搭好啦，有一扇小门和两扇窗。请小兔住进去吧。",
+		"小车搭好啦，圆轮子咕噜咕噜转。豆豆和你一起开回家。",
+	},
+	"pretend_play": {
+		"苹果装进小袋子啦。豆豆再送你一块圆圆的小饼干。",
+		"草莓甜甜的，豆豆给它盖上小盖子。我们带回家慢慢吃。",
+		"胡萝卜扑通跳进汤里。汤变成暖暖的橙色啦。",
+		"小青菜在锅里转了一个圈。蔬菜汤做好啦，呼呼吹凉。",
+		"先给小兔做面条。豆豆来拌一拌，香喷喷的。",
+		"先给小熊盛米饭。小熊说谢谢，吃得肚子圆圆的。",
+		"面条来啦，长长的像小绳子。我们呼呼吹凉再开饭。",
+		"米饭盛进小碗里，再放一颗绿豆豆。小餐做好啦。",
+		"轻轻的包裹打开啦，里面是一条软软的小围巾。送给小兔正合适。",
+		"叮当包裹打开啦，里面是一只小铃铛。摇一下，叮铃铃。",
+		"圆轮子装好啦，小汽车又能咕噜咕噜开起来了。",
+		"方积木放在下面，修理铺多了一张稳稳的小桌子。",
+	},
+	"magic": {
+		"小雨滴答滴答落下来，地上长出三朵小花。一、二、三。",
+		"花瓣轻轻飘下来，红一片，黄一片。豆豆接住了一片。",
+		"圆面包变好啦，闻起来香香的。我们分一半给小兔吧。",
+		"星星面包亮了一下，飞到夜空里。天上多了一颗小星星。",
+		"喵，魔法变出一只小猫。它想和豆豆一起唱歌。",
+		"汪，魔法变出一只小狗。两只小狗一起汪汪问好。",
+		"变大啦，小纽扣变成一轮大月亮，把房间照亮啦。",
+		"变小啦，大气球变成一颗小豆子，轻轻落进口袋里。",
+		"猜对啦，红色和黄色抱一抱，就变成暖暖的橙色。",
+		"蓝泡泡飞起来，里面装着一小片天空。啪，它变成蓝色小雨。",
+		"粉泡泡飞起来，轻轻落在小花上。小花穿上粉色裙子啦。",
+	},
+	"animal_guess": {
+		"下一只会喵喵叫，胡子长长。是小猫还是小狗？",
+		"下一只鼻子长长，耳朵大大。是大象还是斑马？",
+		"下一只穿黑白衣，走路摇摆。是企鹅还是猴子？",
+		"下一只脖子长长，能吃高树叶。是长颈鹿还是小兔？",
+		"下一只尾巴像小伞，爱抱松果。是松鼠还是河马？",
+		"下一只背着小房子，走得慢慢的。是蜗牛还是小鸭？",
+		"下一只身上有黑白条纹，跑得很快。是斑马还是小猫？",
+		"下一只长耳朵，蹦蹦跳。是小兔还是小鸭？",
+	},
+	"color_hunt": {
+		"找到啦，真厉害。下一次找一个圆圆的东西。",
+	},
 }
 
 var activityReplyVariants = map[string][]string{

@@ -354,7 +354,7 @@ async function playSpeechFile(text, onPlaybackReady) {
       playbackMS: elapsedClientMS(playbackStartedAt),
       audioUnderruns: 0,
       audioUnderrunMS: 0,
-      cache: "complete-binary",
+      cache: response.headers.get("X-Pupbox-TTS-Cache") || "complete-unknown",
       error: played ? "" : "speech audio playback failed",
     };
   } catch (error) {

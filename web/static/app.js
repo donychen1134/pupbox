@@ -10,6 +10,7 @@ const state = {
   health: null,
   activities: [],
   events: [],
+  eventSummary: null,
   accessToken: "",
   recordingStartedAt: 0,
   recordingTimer: null,
@@ -32,6 +33,7 @@ const els = {
   textInput: document.querySelector("#textInput"),
   refreshEventsButton: document.querySelector("#refreshEventsButton"),
   eventList: document.querySelector("#eventList"),
+  diagnosticSummary: document.querySelector("#diagnosticSummary"),
   recordingMeter: document.querySelector("#recordingMeter"),
   recordingLevel: document.querySelector("#recordingLevel"),
   recordingTime: document.querySelector("#recordingTime"),
@@ -89,16 +91,60 @@ async function loadEvents() {
   try {
     const payload = await fetchJSON("/api/events?limit=50");
     state.events = payload.events || [];
+    state.eventSummary = payload.summary || null;
+    renderEventSummary();
     renderEvents();
   } catch (error) {
     if (error.status === 401) {
       state.events = [];
+      state.eventSummary = null;
+      renderEventSummary();
       renderEvents("需要访问 token 才能读取诊断记录");
       return;
     }
     state.events = [];
+    state.eventSummary = null;
+    renderEventSummary();
     renderEvents("诊断记录加载失败");
   }
+}
+
+function renderEventSummary() {
+  els.diagnosticSummary.replaceChildren();
+  const summary = state.eventSummary;
+  if (!summary?.sample_size) {
+    els.diagnosticSummary.append(summaryMetric("统计", "暂无样本", "完成一轮后显示"));
+    return;
+  }
+  const cacheRate = summary.tts_cache_samples
+    ? `${Math.round((summary.tts_cache_hit_rate || 0) * 100)}%`
+    : "-";
+  els.diagnosticSummary.append(
+    summaryMetric("样本", String(summary.sample_size), `已评价 ${summary.rated_count || 0}`),
+    summaryMetric("TTS 缓存", cacheRate, `${summary.tts_cache_hits || 0}/${summary.tts_cache_samples || 0} 命中`),
+    percentileMetric("说完等待", summary.wait_first_audio),
+    percentileMetric("完整一轮", summary.turn_total),
+    percentileMetric("STT", summary.stt),
+    percentileMetric("Qwen/回复", summary.reply),
+    percentileMetric("TTS 首音", summary.tts_first_audio),
+  );
+}
+
+function summaryMetric(label, value, detail) {
+  const item = document.createElement("div");
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+  const detailEl = document.createElement("small");
+  detailEl.textContent = detail;
+  item.append(labelEl, valueEl, detailEl);
+  return item;
+}
+
+function percentileMetric(label, stats = {}) {
+  if (!stats?.samples) return summaryMetric(label, "-", "暂无有效样本");
+  return summaryMetric(label, formatDuration(stats.p50_ms), `P90 ${formatDuration(stats.p90_ms)} · ${stats.samples} 轮`);
 }
 
 function renderEvents(message = "") {
@@ -131,7 +177,7 @@ function renderEvent(event) {
   );
   const timings = event.timings || {};
   if (timings.turn_total_ms && timings.playback_ms) {
-    meta.append(eventBadge(`开口 ${formatDuration(Math.max(0, timings.turn_total_ms - timings.playback_ms))}`, ""));
+    meta.append(eventBadge(`说完等待 ${formatDuration(waitForFirstAudio(timings))}`, ""));
   }
   if (timings.audio_duration_ms) {
     meta.append(eventBadge(`录音 ${formatDuration(timings.audio_duration_ms)}`, ""));
@@ -158,6 +204,7 @@ function renderEvent(event) {
   if (event.activity_label || event.safety_category) {
     body.append(eventLine("路由", event.activity_label || event.safety_category));
   }
+  if (event.trace_id) body.append(eventFeedbackControls(event));
   const timingBreakdown = eventTimingBreakdown(event);
   if (timingBreakdown) body.append(timingBreakdown);
   if (event.has_recording && event.trace_id) {
@@ -173,6 +220,48 @@ function renderEvent(event) {
     item.append(errorEl);
   }
   return item;
+}
+
+function waitForFirstAudio(timings) {
+  return Math.max(0, (timings.turn_total_ms || 0) - (timings.playback_ms || 0) - (timings.audio_duration_ms || 0));
+}
+
+function eventFeedbackControls(event) {
+  const row = document.createElement("div");
+  row.className = "event-feedback";
+  const label = document.createElement("span");
+  label.textContent = "家长评价";
+  const controls = document.createElement("div");
+  controls.setAttribute("role", "group");
+  controls.setAttribute("aria-label", "评价这一轮对话");
+  const options = [
+    ["good", "接得好"],
+    ["missed", "没接住"],
+    ["too_long", "太长"],
+  ];
+  for (const [value, text] of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `feedback-button${event.parent_feedback === value ? " selected" : ""}`;
+    button.textContent = text;
+    button.setAttribute("aria-pressed", event.parent_feedback === value ? "true" : "false");
+    button.addEventListener("click", async () => {
+      const feedback = event.parent_feedback === value ? "" : value;
+      for (const control of controls.querySelectorAll("button")) control.disabled = true;
+      try {
+        await postJSON("/api/event-feedback", { trace_id: event.trace_id, feedback });
+        event.parent_feedback = feedback;
+        row.replaceWith(eventFeedbackControls(event));
+        loadEvents().catch(() => {});
+      } catch (error) {
+        for (const control of controls.querySelectorAll("button")) control.disabled = false;
+        showError(error);
+      }
+    });
+    controls.append(button);
+  }
+  row.append(label, controls);
+  return row;
 }
 
 function recordingPlayback(event) {

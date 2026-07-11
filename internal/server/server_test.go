@@ -45,6 +45,7 @@ func TestAccessTokenProtectsAPIs(t *testing.T) {
 		{name: "health", method: http.MethodGet, path: "/api/health"},
 		{name: "activities", method: http.MethodGet, path: "/api/activities"},
 		{name: "events", method: http.MethodGet, path: "/api/events"},
+		{name: "event feedback", method: http.MethodPost, path: "/api/event-feedback", body: `{"trace_id":"trace-1","feedback":"good"}`},
 		{name: "recordings", method: http.MethodGet, path: "/api/recordings/abcd"},
 		{name: "chat", method: http.MethodPost, path: "/api/chat", body: `{"text":"嗯嗯"}`},
 		{name: "speech", method: http.MethodPost, path: "/api/speech", body: `{"text":"汪。"}`},
@@ -144,6 +145,26 @@ func TestSpeechAudioReturnsBinaryPayload(t *testing.T) {
 	}
 	if rec.Header().Get("X-Pupbox-TTS-MS") == "" {
 		t.Fatal("missing TTS timing header")
+	}
+	if got := rec.Header().Get("X-Pupbox-TTS-Cache"); got != "miss" {
+		t.Fatalf("TTS cache = %q, want miss", got)
+	}
+}
+
+func TestSpeechAudioReportsMemoryCacheHit(t *testing.T) {
+	voice := &countingVoiceProvider{}
+	srv := New(Config{Voice: voice, SpeechCacheDir: t.TempDir()})
+	for index, wantCache := range []string{"miss", "memory"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/speech-audio", strings.NewReader(`{"text":"同一句话"}`))
+		req.Header.Set("Content-Type", "application/json")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("X-Pupbox-TTS-Cache") != wantCache {
+			t.Fatalf("request %d status=%d cache=%q, want %q", index+1, rec.Code, rec.Header().Get("X-Pupbox-TTS-Cache"), wantCache)
+		}
+	}
+	if calls := voice.speakCalls.Load(); calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
 	}
 }
 
@@ -479,6 +500,63 @@ func TestTurnMetricsRejectsUnknownConversation(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestEventFeedbackUpdatesPersistedConversation(t *testing.T) {
+	srv := New(Config{EventLogPath: filepath.Join(t.TempDir(), "events.jsonl")})
+	if err := srv.events.Append(ConversationEvent{TraceID: "trace-feedback", Transcript: "你好"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/event-feedback", strings.NewReader(`{"trace_id":"trace-feedback","feedback":"missed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feedback status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	events, err := srv.events.Recent(1)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v err=%v", events, err)
+	}
+	if events[0].ParentFeedback != "missed" || events[0].FeedbackAt == "" {
+		t.Fatalf("feedback was not persisted: %+v", events[0])
+	}
+}
+
+func TestEventFeedbackRejectsInvalidValue(t *testing.T) {
+	srv := New(Config{EventLogPath: filepath.Join(t.TempDir(), "events.jsonl")})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/event-feedback", strings.NewReader(`{"trace_id":"trace-feedback","feedback":"bad-value"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestSummarizeEventsCalculatesCacheAndLatencyPercentiles(t *testing.T) {
+	events := []ConversationEvent{
+		{Source: "dashscope", TTSCache: "miss", Timings: TimingStats{STTMS: 100, ReplyMS: 200, TTSFirstAudioMS: 300, AudioDurationMS: 500, PlaybackMS: 1000, TurnTotalMS: 2000}},
+		{Source: "dashscope", TTSCache: "stream", ParentFeedback: "good", Timings: TimingStats{STTMS: 200, ReplyMS: 400, TTSFirstAudioMS: 600, AudioDurationMS: 1000, PlaybackMS: 2000, TurnTotalMS: 4000}},
+		{Source: "activity:story", TTSCache: "disk", Timings: TimingStats{STTMS: 300, ReplyMS: 600, TTSFirstAudioMS: 900, AudioDurationMS: 1500, PlaybackMS: 3000, TurnTotalMS: 6000}},
+	}
+	summary := summarizeEvents(events)
+	if summary.SampleSize != 3 || summary.RatedCount != 1 || summary.TTSCacheSamples != 3 || summary.TTSCacheHits != 2 {
+		t.Fatalf("summary counts = %+v", summary)
+	}
+	if summary.TTSCacheHitRate < 0.66 || summary.TTSCacheHitRate > 0.67 {
+		t.Fatalf("cache hit rate = %f", summary.TTSCacheHitRate)
+	}
+	if summary.STT.P50MS != 200 || summary.STT.P90MS != 300 || summary.Reply.Samples != 2 || summary.WaitFirstAudio.P50MS != 1000 || summary.WaitFirstAudio.P90MS != 1500 {
+		t.Fatalf("summary percentiles = %+v", summary)
+	}
+}
+
+func TestLegacyCompleteBinaryCacheSourceIsUnknown(t *testing.T) {
+	if hit, known := ttsCacheResult("complete-binary"); hit || known {
+		t.Fatalf("legacy complete-binary = hit:%v known:%v, want unknown", hit, known)
 	}
 }
 

@@ -156,6 +156,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.requireAccess(s.handleHealth))
 	s.mux.HandleFunc("GET /api/activities", s.requireAccess(s.handleActivities))
 	s.mux.HandleFunc("GET /api/events", s.requireAccess(s.handleEvents))
+	s.mux.HandleFunc("POST /api/event-feedback", s.requireAccess(s.handleEventFeedback))
 	s.mux.HandleFunc("GET /api/recordings/", s.requireAccess(s.handleRecording))
 	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
 	s.mux.HandleFunc("POST /api/speech", s.requireAccess(s.handleSpeech))
@@ -247,7 +248,47 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to read event log")
 		return
 	}
-	writeJSON(w, http.StatusOK, eventsResponse{Events: events})
+	writeJSON(w, http.StatusOK, eventsResponse{Events: events, Summary: summarizeEvents(events)})
+}
+
+func (s *Server) handleEventFeedback(w http.ResponseWriter, r *http.Request) {
+	var req eventFeedbackRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.TraceID = strings.TrimSpace(req.TraceID)
+	req.Feedback = strings.TrimSpace(req.Feedback)
+	if req.TraceID == "" || len(req.TraceID) > 128 {
+		writeError(w, http.StatusBadRequest, "valid trace_id is required")
+		return
+	}
+	if req.Feedback != "" && req.Feedback != "good" && req.Feedback != "missed" && req.Feedback != "too_long" {
+		writeError(w, http.StatusBadRequest, "invalid feedback value")
+		return
+	}
+	if s.events == nil {
+		writeError(w, http.StatusServiceUnavailable, "event log is not enabled")
+		return
+	}
+	updated, err := s.events.Update(req.TraceID, func(event *ConversationEvent) {
+		event.ParentFeedback = req.Feedback
+		if req.Feedback == "" {
+			event.FeedbackAt = ""
+		} else {
+			event.FeedbackAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+	})
+	if err != nil {
+		s.log.Warn("failed to update event feedback", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update event feedback")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "conversation event not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true, "feedback": req.Feedback})
 }
 
 func (s *Server) handleRecording(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +406,7 @@ func (s *Server) handleSpeechAudio(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "server voice mode is not enabled")
 		return
 	}
-	audio, mime, err := s.synthesizeSpeech(r.Context(), text)
+	audio, mime, cache, err := s.synthesizeSpeechWithCache(r.Context(), text)
 	if err != nil {
 		s.log.Warn("complete speech audio failed", "error", err)
 		writeError(w, http.StatusBadGateway, "speech synthesis failed")
@@ -378,6 +419,7 @@ func (s *Server) handleSpeechAudio(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(audio)))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Pupbox-TTS-MS", strconv.FormatInt(elapsedMS(started), 10))
+	w.Header().Set("X-Pupbox-TTS-Cache", cache)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(audio)
 }
@@ -759,23 +801,28 @@ func (s *Server) speak(r *http.Request, text string) ([]byte, string, error) {
 }
 
 func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, string, error) {
+	audio, mime, _, err := s.synthesizeSpeechWithCache(ctx, text)
+	return audio, mime, err
+}
+
+func (s *Server) synthesizeSpeechWithCache(ctx context.Context, text string) ([]byte, string, string, error) {
 	if !s.useVoice {
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 	key := s.speechCacheKey(text)
 	s.speechMu.Lock()
 	if cached, ok := s.speechCache[key]; ok {
 		audio := append([]byte(nil), cached.audio...)
 		s.speechMu.Unlock()
-		return audio, cached.mime, nil
+		return audio, cached.mime, "memory", nil
 	}
 	if call, ok := s.speechCalls[key]; ok {
 		s.speechMu.Unlock()
 		select {
 		case <-call.done:
-			return append([]byte(nil), call.audio...), call.mime, call.err
+			return append([]byte(nil), call.audio...), call.mime, "coalesced", call.err
 		case <-ctx.Done():
-			return nil, "", ctx.Err()
+			return nil, "", "", ctx.Err()
 		}
 	}
 	call := &speechCall{done: make(chan struct{})}
@@ -784,7 +831,7 @@ func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, str
 
 	if audio, mime, ok, cacheErr := s.speechDisk.Get(key); ok {
 		s.completeSpeechCall(key, call, audio, mime, nil)
-		return audio, mime, nil
+		return audio, mime, "disk", nil
 	} else if cacheErr != nil {
 		s.log.Warn("failed to read speech cache", "error", cacheErr)
 	}
@@ -796,7 +843,7 @@ func (s *Server) synthesizeSpeech(ctx context.Context, text string) ([]byte, str
 		}
 	}
 	s.completeSpeechCall(key, call, audio, mime, err)
-	return audio, mime, err
+	return audio, mime, "miss", err
 }
 
 type speechStreamCache struct {
@@ -1092,6 +1139,11 @@ type turnMetricsRequest struct {
 	AudioUnderrunMS int64  `json:"audio_underrun_ms"`
 	TTSCache        string `json:"tts_cache"`
 	PlaybackError   string `json:"playback_error"`
+}
+
+type eventFeedbackRequest struct {
+	TraceID  string `json:"trace_id"`
+	Feedback string `json:"feedback"`
 }
 
 type speechResponse struct {

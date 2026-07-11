@@ -125,6 +125,16 @@ func TestActivityReplyVariantsAreRichAndShort(t *testing.T) {
 	}
 }
 
+func TestActivityContinuationRepliesAreShort(t *testing.T) {
+	for id, replies := range activityContinuationReplies {
+		for _, reply := range replies {
+			if strings.TrimSpace(reply) == "" || utf8.RuneCountInString(reply) > 90 {
+				t.Fatalf("activity %q continuation is invalid: %q", id, reply)
+			}
+		}
+	}
+}
+
 func TestStoryActivityRotatesContent(t *testing.T) {
 	seen := make(map[string]bool)
 	for range 3 {
@@ -194,6 +204,46 @@ func TestStoryFollowUpWithoutStoryContextUsesModel(t *testing.T) {
 	}
 }
 
+func TestAdventureContinuesAcrossShortChoiceTurns(t *testing.T) {
+	history := []Turn{{User: "我们去旅行", Reply: activityReplyVariants["adventure"][0], ActivityID: "adventure"}}
+	first, ok := PlanActivityWithHistory("海边", history)
+	if !ok || first.ID != "adventure" || !strings.Contains(first.Reply, "海边到啦") {
+		t.Fatalf("first continuation = %#v ok=%v", first, ok)
+	}
+	history = append(history, Turn{User: "海边", Reply: first.Reply, ActivityID: first.ID})
+	second, ok := PlanActivityWithHistory("贝壳", history)
+	if !ok || second.ID != "adventure" || !strings.Contains(second.Reply, "三只贝壳") {
+		t.Fatalf("second continuation = %#v ok=%v", second, ok)
+	}
+}
+
+func TestPretendAndMagicContinueShortChoices(t *testing.T) {
+	tests := []struct {
+		activityID string
+		previous   string
+		text       string
+		want       string
+	}{
+		{activityID: "pretend_play", previous: activityReplyVariants["pretend_play"][0], text: "草莓", want: "草莓甜甜的"},
+		{activityID: "magic", previous: activityReplyVariants["magic"][0], text: "下花瓣", want: "花瓣轻轻"},
+	}
+	for _, tt := range tests {
+		history := []Turn{{User: "开始", Reply: tt.previous, ActivityID: tt.activityID}}
+		activity, ok := PlanActivityWithHistory(tt.text, history)
+		if !ok || activity.ID != tt.activityID || !strings.Contains(activity.Reply, tt.want) {
+			t.Errorf("%s continuation = %#v ok=%v", tt.activityID, activity, ok)
+		}
+	}
+}
+
+func TestAnimalGuessContinuesWithNextRound(t *testing.T) {
+	history := []Turn{{User: "猜动物", Reply: activityReplyVariants["animal_guess"][0], ActivityID: "animal_guess"}}
+	activity, ok := PlanActivityWithHistory("小兔子", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, "小猫还是小狗") {
+		t.Fatalf("animal continuation = %#v ok=%v", activity, ok)
+	}
+}
+
 func TestPresenceActivityRotatesContent(t *testing.T) {
 	seen := make(map[string]bool)
 	for range 3 {
@@ -224,8 +274,8 @@ func TestGreetingActivityRotatesContent(t *testing.T) {
 
 func TestPrewarmPrioritizesCommonConversationReplies(t *testing.T) {
 	first := PrewarmReplies()
-	if len(first) > 80 {
-		first = first[:80]
+	if len(first) > 160 {
+		first = first[:160]
 	}
 	seen := make(map[string]bool, len(first))
 	for _, reply := range first {
@@ -234,7 +284,14 @@ func TestPrewarmPrioritizesCommonConversationReplies(t *testing.T) {
 	for _, id := range []string{"presence", "greeting", "chat", "story", "adventure", "pretend_play", "magic"} {
 		for _, reply := range activityReplyVariants[id] {
 			if !seen[reply] {
-				t.Fatalf("first 80 prewarm replies do not include %s reply %q", id, reply)
+				t.Fatalf("first 160 prewarm replies do not include %s reply %q", id, reply)
+			}
+		}
+	}
+	for id, replies := range activityContinuationReplies {
+		for _, reply := range replies {
+			if !seen[reply] {
+				t.Fatalf("first 160 prewarm replies do not include %s continuation %q", id, reply)
 			}
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -37,6 +38,8 @@ type ConversationEvent struct {
 	HasRecording    bool         `json:"has_recording,omitempty"`
 	RecordingMIME   string       `json:"recording_mime,omitempty"`
 	TTSCache        string       `json:"tts_cache,omitempty"`
+	ParentFeedback  string       `json:"parent_feedback,omitempty"`
+	FeedbackAt      string       `json:"feedback_at,omitempty"`
 	Timings         TimingStats  `json:"timings"`
 	Errors          *EventErrors `json:"errors,omitempty"`
 }
@@ -57,7 +60,27 @@ type eventErrors struct {
 }
 
 type eventsResponse struct {
-	Events []ConversationEvent `json:"events"`
+	Events  []ConversationEvent `json:"events"`
+	Summary EventSummary        `json:"summary"`
+}
+
+type EventSummary struct {
+	SampleSize      int             `json:"sample_size"`
+	RatedCount      int             `json:"rated_count"`
+	TTSCacheSamples int             `json:"tts_cache_samples"`
+	TTSCacheHits    int             `json:"tts_cache_hits"`
+	TTSCacheHitRate float64         `json:"tts_cache_hit_rate"`
+	WaitFirstAudio  PercentileStats `json:"wait_first_audio"`
+	TurnTotal       PercentileStats `json:"turn_total"`
+	STT             PercentileStats `json:"stt"`
+	Reply           PercentileStats `json:"reply"`
+	TTSFirstAudio   PercentileStats `json:"tts_first_audio"`
+}
+
+type PercentileStats struct {
+	Samples int   `json:"samples"`
+	P50MS   int64 `json:"p50_ms"`
+	P90MS   int64 `json:"p90_ms"`
 }
 
 func NewEventStore(path string, limits ...int) *EventStore {
@@ -173,6 +196,77 @@ func (s *EventStore) Recent(limit int) ([]ConversationEvent, error) {
 		events = append(events, event)
 	}
 	return events, nil
+}
+
+func summarizeEvents(events []ConversationEvent) EventSummary {
+	summary := EventSummary{SampleSize: len(events)}
+	waitFirstAudio := make([]int64, 0, len(events))
+	turnTotal := make([]int64, 0, len(events))
+	stt := make([]int64, 0, len(events))
+	reply := make([]int64, 0, len(events))
+	ttsFirstAudio := make([]int64, 0, len(events))
+	for _, event := range events {
+		if event.ParentFeedback != "" {
+			summary.RatedCount++
+		}
+		if hit, known := ttsCacheResult(event.TTSCache); known {
+			summary.TTSCacheSamples++
+			if hit {
+				summary.TTSCacheHits++
+			}
+		}
+		appendPositive := func(values *[]int64, value int64) {
+			if value > 0 {
+				*values = append(*values, value)
+			}
+		}
+		appendPositive(&turnTotal, event.Timings.TurnTotalMS)
+		appendPositive(&stt, event.Timings.STTMS)
+		if event.Source == "dashscope" || event.Source == "openai" {
+			appendPositive(&reply, event.Timings.ReplyMS)
+		}
+		appendPositive(&ttsFirstAudio, event.Timings.TTSFirstAudioMS)
+		if event.Timings.PlaybackMS > 0 {
+			wait := event.Timings.TurnTotalMS - event.Timings.PlaybackMS - event.Timings.AudioDurationMS
+			appendPositive(&waitFirstAudio, wait)
+		}
+	}
+	if summary.TTSCacheSamples > 0 {
+		summary.TTSCacheHitRate = float64(summary.TTSCacheHits) / float64(summary.TTSCacheSamples)
+	}
+	summary.WaitFirstAudio = percentileStats(waitFirstAudio)
+	summary.TurnTotal = percentileStats(turnTotal)
+	summary.STT = percentileStats(stt)
+	summary.Reply = percentileStats(reply)
+	summary.TTSFirstAudio = percentileStats(ttsFirstAudio)
+	return summary
+}
+
+func ttsCacheResult(value string) (hit, known bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "stream", "complete", "memory", "disk", "coalesced":
+		return true, true
+	case "miss", "fallback", "browser-fallback":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func percentileStats(values []int64) PercentileStats {
+	if len(values) == 0 {
+		return PercentileStats{}
+	}
+	sorted := append([]int64(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	nearestRank := func(percent int) int64 {
+		index := (percent*len(sorted) + 99) / 100
+		if index < 1 {
+			index = 1
+		}
+		return sorted[index-1]
+	}
+	return PercentileStats{Samples: len(sorted), P50MS: nearestRank(50), P90MS: nearestRank(90)}
 }
 
 func (s *EventStore) Update(traceID string, update func(*ConversationEvent)) (bool, error) {

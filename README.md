@@ -117,7 +117,7 @@ export PUPBOX_STT_TRIM_SILENCE=true
 export PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
 export PUPBOX_TTS_CACHE_LIMIT=512
 export PUPBOX_TTS_PREWARM=true
-export PUPBOX_TTS_PREWARM_LIMIT=80
+export PUPBOX_TTS_PREWARM_LIMIT=192
 # Optional, parent-only diagnostic recording playback:
 export PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 export PUPBOX_RECORDING_LIMIT=20
@@ -144,6 +144,8 @@ https://pupbox.example.com/toy.html?clearToken=1
 See [docs/deploy-vps.md](docs/deploy-vps.md) for the GitHub Release, systemd, and Caddy deployment path. The VPS does not need Go installed when using release packages.
 
 See [docs/software-roadmap.md](docs/software-roadmap.md) for the remaining phone-validation work and [docs/hardware-roadmap.md](docs/hardware-roadmap.md) for the staged path to an ESP32-S3 bench prototype and a supervised plush-dog test.
+
+See [docs/project-review.md](docs/project-review.md) for the current infrastructure, model, networking, privacy, and final-device risk review.
 
 The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 
@@ -319,7 +321,7 @@ Voice and chat responses include timing diagnostics:
 }
 ```
 
-`GET /api/events?limit=50` returns newest-first persisted conversation diagnostics from the JSONL event log. The parent page uses this as its single history view rather than rendering a second chronological transcript. It highlights recording duration, STT input duration and trim ratio, and the wait from button release to first audio, alongside upload/STT/Qwen/TTS/playback timings, TTS cache source, provider errors, safety and activity routes, and protected diagnostic recordings. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
+`GET /api/events?limit=50` returns newest-first persisted conversation diagnostics from the JSONL event log plus aggregate TTS cache hit rate and P50/P90 latency. The parent page uses this as its single history view rather than rendering a second chronological transcript. It highlights recording duration, STT input duration and trim ratio, and the wait from button release to first playable audio, alongside upload/STT/Qwen/TTS/playback timings, real TTS cache source, provider errors, safety and activity routes, and protected diagnostic recordings. Parents can mark a turn as `接得好`, `没接住`, or `太长`; `POST /api/event-feedback` writes that label back to the same JSONL event. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
 
 ## Local Automation
 
