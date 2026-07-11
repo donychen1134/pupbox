@@ -1,72 +1,72 @@
-# Pupbox Hardware Roadmap
+# Pupbox 硬件路线图
 
-The first hardware milestone is a supervised, voice-only prototype. Motion, screens, and autonomous wake words are intentionally deferred until a child repeatedly chooses to use the voice experience.
+第一个硬件里程碑，是做出一台由家长陪同使用、纯语音交互的原型。孩子是否愿意反复使用语音能力还没有充分验证前，暂不增加动作、屏幕和自动唤醒。
 
-## Findings
+## 调研结论
 
-- FoloToy validated a Huohuotu conversion with an ESP32, the toy's analog microphone, server-side speech processing, MQTT control, audio upload, and HTTPS reply download. Their published target for short replies was 3-5 seconds.
-- FoloToy provides Huohuotu firmware and a self-hosted server stack, but its MQTT/UDP/HTTPS device protocol is not directly compatible with Pupbox.
-- XiaoZhi documents a common DIY stack: ESP32-S3 N16R8, INMP441 microphone, MAX98357A amplifier, and a 2-3 W speaker. This is inexpensive but requires wiring, power work, and firmware adaptation.
-- Integrated ESP32-S3 audio boards reduce first-time hardware risk by combining the controller, microphone, codec/amplifier, and speaker connection.
+- FoloToy 已经验证过火火兔改造方案：使用 ESP32、火火兔自带的模拟麦克风，并把语音处理放在服务器端；设备通过 MQTT 接收控制消息、上传录音，再通过 HTTPS 下载回复音频。其公开的短回复目标是 3–5 秒。
+- FoloToy 提供适配火火兔的固件和可自行部署的服务端，但它使用的 MQTT、UDP 和 HTTPS 设备协议不能直接连接 Pupbox，需要增加协议适配层。
+- 小智 AI 给出的常见 DIY 组合包括：ESP32-S3 N16R8、INMP441 麦克风、MAX98357A 功放和 2–3W 扬声器。成本较低，但需要自己接线、处理供电并适配固件。
+- 集成式 ESP32-S3 音频开发板已经把主控、麦克风、音频编解码或功放、扬声器接口整合在一起，更适合第一次做硬件，能减少接线和音频干扰问题。
 
-Sources:
+资料来源：
 
-- [FoloToy Huohuotu engineering notes](https://folotoy.com/zh/documents/hello-folotoy/)
-- [FoloToy Huohuotu firmware releases](https://github.com/FoloToy/folotoy-bin/releases/)
-- [FoloToy self-hosted server](https://github.com/FoloToy/folotoy-server-self-hosting)
-- [XiaoZhi ESP32-S3 hardware guide](https://xiaozhi.dev/en/docs/usage/hardware-guide/)
-- [Waveshare ESP32-S3 audio board](https://www.waveshare.net/shop/ESP32-S3-AUDIO-Board-EN.htm)
+- [FoloToy 火火兔改造记录](https://folotoy.com/zh/documents/hello-folotoy/)
+- [FoloToy 火火兔固件发布页](https://github.com/FoloToy/folotoy-bin/releases/)
+- [FoloToy 自部署服务端](https://github.com/FoloToy/folotoy-server-self-hosting)
+- [小智 AI ESP32-S3 硬件搭建指南](https://xiaozhi.dev/en/docs/usage/hardware-guide/)
+- [微雪 ESP32-S3 音频开发板](https://www.waveshare.net/shop/ESP32-S3-AUDIO-Board-EN.htm)
 - [FoloToy Magicbox](https://folotoy.com/products/magicbox/)
 
-## Recommended Sequence
+## 推荐实施顺序
 
-### H0: Finish The Phone Acceptance Test
+### H0：完成手机端体验验收
 
-Exit criteria:
+进入硬件阶段前，软件应满足：
 
-- Ten-minute child sessions do not collapse because of latency, broken context, or repetitive replies.
-- A parent can inspect each turn and understand failures without retrieving raw recordings.
-- Safety replies and volume are acceptable under direct adult supervision.
+- 孩子可以连续玩 10 分钟，不会因为延迟、上下文断裂或机械重复而放弃。
+- 家长可以通过诊断页理解每一轮失败的原因，不需要读取原始录音。
+- 在家长直接陪同下，安全回复和最大音量可以接受。
 
-### H1: Bench Prototype Without A Toy Shell
+### H1：不装外壳的桌面硬件原型
 
-Use one integrated ESP32-S3 audio board, one physical talk button, its microphone, and a small speaker. Power it by USB from a certified power bank during supervised tests. Do not add a loose lithium cell yet.
+购买一块集成式 ESP32-S3 音频开发板，先使用一个实体按键、板载麦克风和小扬声器。原型阶段使用 USB 连接合格的移动电源供电，不要立即接裸锂电池。
 
-The device firmware only needs to:
+设备固件第一版只需要完成：
 
-1. Connect to Wi-Fi and store a device token.
-2. Record while the button is held.
-3. Upload audio to a Pupbox device endpoint.
-4. Download and play the returned Opus file.
-5. Emit simple listening, waiting, speaking, and error tones.
+1. 连接 Wi-Fi，并保存设备访问令牌。
+2. 按住按键时录音。
+3. 把录音上传到 Pupbox 设备接口。
+4. 下载并播放服务端返回的 Opus 音频。
+5. 播放“正在听、正在等待、正在说话、发生错误”等简单提示音。
 
-This keeps STT, conversation state, safety policy, Qwen, TTS, and diagnostics in the existing Go service.
+STT、会话状态、安全规则、Qwen、TTS 和诊断能力继续放在现有 Go 服务里，ESP32 不运行大模型。
 
-### H2: Put The Bench Prototype In A Plush Dog
+### H2：装进毛绒小狗
 
-Choose a plush shell with a removable electronics pouch. Keep the microphone opening and speaker grille unobstructed. Use a recessed or fabric-covered talk button that cannot detach.
+选择带可拆卸电子仓的毛绒外壳，麦克风孔和扬声器开口不能被厚填充物挡住。录音按键应做成凹陷式或用布料覆盖，并确保无法被孩子拆下。
 
-The first shell prototype remains USB powered or uses a sealed commercial power bank. Test surface temperature, maximum volume, cable strain, drop resistance, and whether any part can become a choking hazard.
+第一版毛绒原型继续使用 USB 供电，或者使用有完整外壳和保护电路的成品移动电源。需要测试：表面温度、最大音量、拉线强度、跌落后是否松动，以及是否存在可吞咽的小零件。
 
-### H3: Hands-Free And Motion
+### H3：免按键和动作能力
 
-Only after H2 is stable:
+只有 H2 稳定后再增加：
 
-- Add local VAD and a wake phrase.
-- Add echo handling so the toy does not hear its own speaker.
-- Add one low-risk motion such as a slow tail movement.
-- Design a protected battery, charging board, enclosure, and service access.
+- 本地 VAD 和唤醒词。
+- 回声处理，避免小狗听到自己的扬声器后误触发。
+- 一个低风险、速度较慢的动作，例如尾巴摆动。
+- 带保护电路的电池、充电板、固定外壳和可维护结构。
 
-## Buy Versus Build
+## 购买成品还是自己开发
 
-### Fastest Physical Benchmark
+### 最快的实体体验验证
 
-Buy a FoloToy Magicbox or a known-compatible modified Huohuotu. This quickly tests whether a physical object increases engagement, but it does not reuse Pupbox directly without a protocol adapter and may introduce a separate subscription or firmware dependency.
+购买 FoloToy Magicbox，或者型号明确、与 FoloToy 固件兼容的魔改火火兔。这样可以最快验证“实体玩具是否比手机更能吸引孩子”，但它不能直接复用 Pupbox，需要协议适配，还可能引入单独的订阅和固件依赖。
 
-### Recommended Pupbox Prototype
+### 推荐的 Pupbox 原型路线
 
-Buy an integrated ESP32-S3 audio board and keep the existing Pupbox backend. This requires firmware work but preserves the child-specific conversation behavior, diagnostics, safety rules, provider choices, and deployment already built here.
+购买集成式 ESP32-S3 音频开发板，并继续使用现有 Pupbox 后端。它需要开发一小段设备固件，但可以完整保留我们已经完成的儿童对话策略、诊断、安全规则、模型选择和部署能力。
 
-### Not Recommended As The First Step
+### 不建议作为第一步的路线
 
-Do not start with a bare ESP32-S3, separate microphone, amplifier, battery charger, and custom plush wiring. FoloToy's own notes show that charging interference and microphone selection can consume substantial debugging time. An integrated audio board is a better first hardware learning step.
+不要一开始就购买裸 ESP32-S3、独立麦克风、独立功放、充电板和裸电池，再自行塞入毛绒玩具。FoloToy 的公开记录显示，仅充电干扰和麦克风选型就可能消耗大量排查时间。第一次硬件迭代使用集成音频开发板更稳妥。
