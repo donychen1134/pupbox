@@ -90,9 +90,8 @@ func Activities() []Activity {
 			ID:       "presence",
 			Label:    "陪伴",
 			Prompt:   "豆豆在做什么",
-			Reply:    "豆豆正趴着听你说话呢。小尾巴还在轻轻摇。",
+			Reply:    "豆豆在认真听你说话呢。",
 			Category: "chat",
-			Action:   "tail_wag",
 		},
 		{
 			ID:       "comfort",
@@ -151,10 +150,13 @@ func PlanActivity(text string) (Activity, bool) {
 
 // PlanActivityWithHistory resolves short follow-ups that only make sense after a previous turn.
 func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
+	normalized := stripDogAddress(normalizeToddlerIntentText(text))
+	if containsAny(normalized, "听不懂", "听不清", "听不见", "不清楚", "有点卡", "太卡", "卡住") {
+		return Activity{}, false
+	}
 	if activity, ok := PlanActivity(text); ok {
 		return activity, true
 	}
-	normalized := stripDogAddress(normalizeToddlerIntentText(text))
 	if !equalsAny(normalized, "再讲一个", "再来一个", "讲一个新的", "讲个新的", "换一个") {
 		return Activity{}, false
 	}
@@ -389,9 +391,9 @@ var activityReplyVariants = map[string][]string{
 		"害怕的时候要找爸爸妈妈。豆豆也会守在这里，轻轻摇尾巴。",
 	},
 	"presence": {
-		"豆豆正趴着听你说话呢。小尾巴还在轻轻摇。",
-		"豆豆在看你呀，还偷偷摇了两下尾巴。",
-		"豆豆在等你聊天呢。现在耳朵竖得高高的。",
+		"豆豆在认真听你说话呢。",
+		"豆豆在想今天聊什么呀。",
+		"豆豆正在等你说话呢。",
 		"豆豆刚刚在数自己的小爪子，一、二、三、四。",
 		"豆豆在想一朵云像不像棉花糖。你觉得呢？",
 		"豆豆在练习小小声地汪，怕吵到你呀。",

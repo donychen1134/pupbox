@@ -691,19 +691,20 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 	}
 
 	if activity, ok := dog.PlanActivityWithHistory(text, history); ok {
+		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
 		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 	}
 
 	if s.useChat {
 		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), contextualInput(history, text))
 		if err != nil {
-			fallback := dog.MockReply(text)
+			fallback := dog.SpeechOnlyReply(dog.MockReply(text))
 			return fallback, safety, nil, "mock_fallback", err
 		}
-		return dog.ClampReply(reply, 90), safety, nil, s.chat.Name(), nil
+		return dog.SpeechOnlyReply(dog.ClampReply(reply, 90)), safety, nil, s.chat.Name(), nil
 	}
 
-	return dog.MockReply(text), safety, nil, "mock", nil
+	return dog.SpeechOnlyReply(dog.MockReply(text)), safety, nil, "mock", nil
 }
 
 func (s *Server) speak(r *http.Request, text string) ([]byte, string, error) {

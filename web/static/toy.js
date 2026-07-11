@@ -331,6 +331,7 @@ async function playSpeechStream(text, onFirstAudio) {
   let pcmPlayer = null;
   let started = false;
   let firstAudioAt = 0;
+  let playbackStartedAt = 0;
   let cache = "";
   let ttsMS = 0;
   let streamError = "";
@@ -366,14 +367,17 @@ async function playSpeechStream(text, onFirstAudio) {
         }
         accepted = pcmPlayer.enqueue(event.audio_base64);
       } else {
+        if (!started) {
+          started = true;
+          playbackStartedAt = performance.now();
+          onFirstAudio?.();
+        }
         completePlayback.push(playBase64Audio(event.audio_base64, event.audio_mime || "audio/mpeg"));
         accepted = true;
       }
       cache = event.cache || cache;
-      if (accepted && !started) {
-        started = true;
+      if (accepted && !firstAudioAt) {
         firstAudioAt = performance.now();
-        onFirstAudio?.();
       }
     };
 
@@ -392,7 +396,12 @@ async function playSpeechStream(text, onFirstAudio) {
   }
   let pcmStats = {};
   if (pcmPlayer) {
-    await pcmPlayer.finish();
+    const playedPCM = await pcmPlayer.finish(() => {
+      started = true;
+      playbackStartedAt = performance.now();
+      onFirstAudio?.();
+    });
+    if (!playedPCM && !completePlayback.length) started = false;
     pcmStats = pcmPlayer.stats();
   }
   if (completePlayback.length) {
@@ -403,7 +412,7 @@ async function playSpeechStream(text, onFirstAudio) {
     played: started,
     ttsFirstAudioMS: firstAudioAt ? Math.max(0, Math.round(firstAudioAt - requestStartedAt)) : 0,
     ttsMS,
-    playbackMS: firstAudioAt ? elapsedClientMS(firstAudioAt) : 0,
+    playbackMS: playbackStartedAt ? elapsedClientMS(playbackStartedAt) : 0,
     audioUnderruns: pcmStats.underruns || 0,
     audioUnderrunMS: pcmStats.underrunMS || 0,
     cache,
@@ -414,42 +423,31 @@ async function playSpeechStream(text, onFirstAudio) {
 function createPCMPlayer(sampleRate) {
   const context = unlockFeedbackAudio();
   if (!context) return null;
-  const initialBufferSeconds = 0.42;
-  const recoveryBufferSeconds = 0.06;
-  let nextStart = 0;
-  let scheduled = false;
-  let underruns = 0;
-  let underrunMS = 0;
-  let pending = 0;
-  let finished = false;
-  let leftover = null;
-  let resolveFinished;
-  const finishedPromise = new Promise((resolve) => {
-    resolveFinished = resolve;
-  });
-
-  const finishIfReady = () => {
-    if (finished && pending === 0) resolveFinished();
-  };
+  const chunks = [];
+  let totalBytes = 0;
 
   return {
     enqueue(base64) {
-      let bytes = decodeBase64Bytes(base64);
-      if (leftover !== null) {
-        const joined = new Uint8Array(bytes.length + 1);
-        joined[0] = leftover;
-        joined.set(bytes, 1);
-        bytes = joined;
-        leftover = null;
-      }
-      if (bytes.length % 2 === 1) {
-        leftover = bytes[bytes.length - 1];
-        bytes = bytes.subarray(0, bytes.length - 1);
-      }
+      const bytes = decodeBase64Bytes(base64);
       if (!bytes.length) return false;
-
-      const samples = new Float32Array(bytes.length / 2);
-      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      chunks.push(bytes);
+      totalBytes += bytes.length;
+      return true;
+    },
+    finish(onPlaybackReady) {
+      if (totalBytes < 2) return Promise.resolve(false);
+      const evenBytes = totalBytes - (totalBytes % 2);
+      const pcm = new Uint8Array(evenBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        const remaining = evenBytes - offset;
+        if (remaining <= 0) break;
+        const part = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+        pcm.set(part, offset);
+        offset += part.length;
+      }
+      const samples = new Float32Array(evenBytes / 2);
+      const view = new DataView(pcm.buffer);
       for (let i = 0; i < samples.length; i += 1) {
         samples[i] = view.getInt16(i * 2, true) / 32768;
       }
@@ -458,38 +456,18 @@ function createPCMPlayer(sampleRate) {
       const source = context.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioOutput(context));
-      let startAt;
-      if (!scheduled) {
-        startAt = context.currentTime + initialBufferSeconds;
-        scheduled = true;
-      } else if (nextStart <= context.currentTime) {
-        startAt = context.currentTime + recoveryBufferSeconds;
-        underruns += 1;
-        underrunMS += Math.max(0, Math.round((startAt - nextStart) * 1000));
-      } else {
-        startAt = nextStart;
-      }
-      pending += 1;
-      source.addEventListener("ended", () => {
-        pending -= 1;
-        finishIfReady();
-      }, { once: true });
-      try {
-        source.start(startAt);
-      } catch (error) {
-        pending -= 1;
-        throw error;
-      }
-      nextStart = startAt + audioBuffer.duration;
-      return true;
-    },
-    finish() {
-      finished = true;
-      finishIfReady();
-      return finishedPromise;
+      return new Promise((resolve) => {
+        source.addEventListener("ended", () => resolve(true), { once: true });
+        try {
+          onPlaybackReady?.();
+          source.start(context.currentTime + 0.06);
+        } catch (error) {
+          resolve(false);
+        }
+      });
     },
     stats() {
-      return { underruns, underrunMS };
+      return { underruns: 0, underrunMS: 0 };
     },
   };
 }
@@ -501,20 +479,7 @@ async function speakStatus(text, stateText) {
 }
 
 function actionLabel(payload) {
-  switch (payload.activity?.action) {
-    case "tail_wag":
-      return "摇摇尾巴";
-    case "ear_wiggle":
-      return "动动耳朵";
-    case "glow_red":
-      return "找红色";
-    case "paw_tap":
-      return "拍拍爪子";
-    case "slow_breathe":
-      return "慢慢呼吸";
-    default:
-      return "豆豆说话";
-  }
+  return payload.safety?.triggered ? "找爸爸妈妈" : "豆豆说话";
 }
 
 function setPhase(phase, stateText, label) {
@@ -972,3 +937,5 @@ function reportTurnMetrics(traceID, metrics) {
     keepalive: true,
   }).catch(() => {});
 }
+
+export { createPCMPlayer };

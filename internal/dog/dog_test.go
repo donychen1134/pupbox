@@ -165,6 +165,12 @@ func TestPresenceActivityRotatesContent(t *testing.T) {
 	}
 }
 
+func TestPlaybackComplaintTakesPriorityOverPresenceActivity(t *testing.T) {
+	if activity, ok := PlanActivityWithHistory("你干啥呢？我听不懂你说话，有点卡。", nil); ok {
+		t.Fatalf("activity = %#v, want model to simplify the reply", activity)
+	}
+}
+
 func TestPrewarmRepliesAreUniqueAndCoverReviewedActivities(t *testing.T) {
 	replies := PrewarmReplies()
 	if len(replies) < 50 {
@@ -217,5 +223,15 @@ func TestClampReply(t *testing.T) {
 	got := ClampReply("一二三四五", 3)
 	if got != "一二三。" {
 		t.Fatalf("unexpected clamped reply %q", got)
+	}
+}
+
+func TestSpeechOnlyReplyRemovesUnsupportedToyInteraction(t *testing.T) {
+	got := SpeechOnlyReply("豆豆在这里呢，不跑掉。要摸摸头吗？")
+	if got != "豆豆在这里呢，不跑掉。" {
+		t.Fatalf("unexpected speech-only reply %q", got)
+	}
+	if got := SpeechOnlyReply("豆豆摇尾巴。来碰爪子吧。"); got != "豆豆在听你说话呢。" {
+		t.Fatalf("unexpected all-removed fallback %q", got)
 	}
 }

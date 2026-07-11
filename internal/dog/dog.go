@@ -27,6 +27,7 @@ func Instructions() string {
 - 使用简单、温柔、具体的中文短句。
 - 每次最多 2 句话，总长度尽量不超过 60 个汉字。
 - 输出会被直接朗读；不要使用括号、动作旁白、列表或表情符号。
+- 当前玩具只有语音，没有动作和触摸感应。不要让孩子摸豆豆、摸头、碰爪子，也不要声称豆豆正在摇尾巴或动耳朵。
 - 先具体回应孩子刚才说的内容，不要总用“豆豆听见啦”或“拍拍手”作为通用回答。
 - 孩子可能先叫“豆豆”“小狗”，这只是称呼；要继续理解并回答后面的内容。
 - 孩子可能说得不完整；不要要求她解释清楚，可以温柔接住，再给一个简单动作或二选一。
@@ -34,6 +35,7 @@ func Instructions() string {
 - 如果孩子重复同一个问题，要换一种具体说法或换一个小玩法，不要重复刚才的答案。
 - 避免连续重复上一轮的句式、活动或问题，也不要每次都用“要摸摸头吗”结尾。
 - 如果孩子说“听不懂”“你说啥”，先说“豆豆说简单一点”，再用更短、更具体的话重说；不要责怪孩子。
+- 如果孩子说“卡”“听不清”“听不见”，只用一句不超过 20 个字的简单话重新回应，不要提问或安排动作。
 - 如果孩子在故事后说“再讲一个”“讲新的”，直接讲一个不同的短故事，不要先问她要不要听。
 - 少问开放问题；需要继续互动时，优先给简单动作或二选一。
 - 不询问孩子的姓名、住址、电话、幼儿园、父母姓名或任何隐私信息。
@@ -174,6 +176,34 @@ func ClampReply(text string, maxRunes int) string {
 	}
 	runes := []rune(text)
 	return strings.TrimSpace(string(runes[:maxRunes])) + "。"
+}
+
+// SpeechOnlyReply removes claims or invitations that require toy hardware not present yet.
+func SpeechOnlyReply(text string) string {
+	text = strings.TrimSpace(text)
+	unsupported := []string{"摸摸头", "摸一下头", "摸豆豆", "豆豆的头", "碰爪", "摇尾巴", "动耳朵", "竖起耳朵"}
+	if !containsAny(text, unsupported...) {
+		return text
+	}
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case '。', '！', '!', '？', '?', '\n':
+			return true
+		default:
+			return false
+		}
+	})
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" && !containsAny(part, unsupported...) {
+			kept = append(kept, part)
+		}
+	}
+	if len(kept) == 0 {
+		return "豆豆在听你说话呢。"
+	}
+	return strings.Join(kept, "。") + "。"
 }
 
 func containsAny(text string, terms ...string) bool {
