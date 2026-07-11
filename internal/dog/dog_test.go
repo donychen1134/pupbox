@@ -316,3 +316,14 @@ func TestClarificationReplyRepeatsPreviousIdea(t *testing.T) {
 		t.Fatalf("clarification is too long: %q", got)
 	}
 }
+
+func TestClarificationReplyDoesNotTreatAnimalChatAsStory(t *testing.T) {
+	history := []Turn{{
+		User:  "小鸭子嘎嘎嘎",
+		Reply: "豆豆也学小鸭子叫，嘎嘎嘎。你还能想到别的小动物叫声吗？",
+	}}
+	got, ok := ClarificationReply("你说啥呢？", history)
+	if !ok || !strings.Contains(got, "学小鸭子叫") || strings.Contains(got, "小故事") {
+		t.Fatalf("clarification = %q ok=%v", got, ok)
+	}
+}

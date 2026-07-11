@@ -219,12 +219,14 @@ func ClarificationReply(text string, history []Turn) (string, bool) {
 	if !containsAny(normalized, "听不懂", "你说啥", "你说什么", "说的什么", "没听懂") || len(history) == 0 {
 		return "", false
 	}
-	previous := strings.TrimSpace(history[len(history)-1].Reply)
-	if containsAny(previous, "豆豆说简单一点") && len(history) > 1 {
-		previous = strings.TrimSpace(history[len(history)-2].Reply)
+	previousTurn := history[len(history)-1]
+	previous := strings.TrimSpace(previousTurn.Reply)
+	if containsAny(previous, "豆豆说简单一点", "豆豆刚才") && len(history) > 1 {
+		previousTurn = history[len(history)-2]
+		previous = strings.TrimSpace(previousTurn.Reply)
 	}
 	switch {
-	case containsAny(previous, "从前", "故事", "小松鼠", "小鸭子", "小兔子"):
+	case previousTurn.ActivityID == "story" || containsAny(previous, "从前", "故事"):
 		return "豆豆刚才在讲一个小故事。", true
 	case containsAny(previous, "唱", "啦啦", "滴答"):
 		return "豆豆刚才在唱歌，啦啦啦。", true
