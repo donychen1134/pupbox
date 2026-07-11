@@ -380,14 +380,21 @@ func (s *Server) handleSpeechStream(w http.ResponseWriter, r *http.Request) {
 
 	if audio, mime, cache, ok := s.cachedSpeechForStream(text); ok {
 		firstAudioMS := elapsedMS(started)
-		if err := writeEvent(speechStreamEvent{
-			Type:        "audio",
-			AudioBase64: encodeAudio(audio),
-			AudioMIME:   mime,
-			SampleRate:  cache.sampleRate,
-			Cache:       cache.kind,
-		}); err != nil {
-			return
+		chunkSize := len(audio)
+		if cache.kind == "stream" && mime == "audio/pcm" {
+			chunkSize = streamAudioChunkBytes
+		}
+		for offset := 0; offset < len(audio); offset += chunkSize {
+			end := min(offset+chunkSize, len(audio))
+			if err := writeEvent(speechStreamEvent{
+				Type:        "audio",
+				AudioBase64: encodeAudio(audio[offset:end]),
+				AudioMIME:   mime,
+				SampleRate:  cache.sampleRate,
+				Cache:       cache.kind,
+			}); err != nil {
+				return
+			}
 		}
 		_ = writeEvent(speechStreamEvent{
 			Type:  "done",
@@ -733,6 +740,8 @@ type speechStreamCache struct {
 	kind       string
 	sampleRate int
 }
+
+const streamAudioChunkBytes = 8 << 10
 
 func (s *Server) cachedSpeechForStream(text string) ([]byte, string, speechStreamCache, bool) {
 	key := s.speechCacheKey(text)

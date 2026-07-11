@@ -30,8 +30,6 @@ const els = {
   activityTray: document.querySelector("#activityTray"),
   textForm: document.querySelector("#textForm"),
   textInput: document.querySelector("#textInput"),
-  clearButton: document.querySelector("#clearButton"),
-  logList: document.querySelector("#logList"),
   refreshEventsButton: document.querySelector("#refreshEventsButton"),
   eventList: document.querySelector("#eventList"),
   recordingMeter: document.querySelector("#recordingMeter"),
@@ -56,7 +54,6 @@ function bindEvents() {
     const text = els.textInput.value.trim();
     if (!text) return;
     els.textInput.value = "";
-    appendLog("child", "小朋友", text);
     setBusy("豆豆想一想");
     try {
       const response = await postJSON("/api/chat", { text });
@@ -73,10 +70,6 @@ function bindEvents() {
     if (state.recording) stopRecording();
   });
 
-  els.clearButton.addEventListener("click", () => {
-    els.logList.replaceChildren();
-  });
-
   els.refreshEventsButton.addEventListener("click", () => {
     loadEvents().catch(showError);
   });
@@ -88,7 +81,7 @@ async function loadActivities() {
     state.activities = payload.activities || [];
     renderActivities();
   } catch (error) {
-    appendLog("warn", "活动", "活动列表加载失败");
+    els.voiceNote.textContent = "活动列表加载失败";
   }
 }
 
@@ -97,34 +90,14 @@ async function loadEvents() {
     const payload = await fetchJSON("/api/events?limit=50");
     state.events = payload.events || [];
     renderEvents();
-    renderConversationHistory();
   } catch (error) {
     if (error.status === 401) {
       state.events = [];
       renderEvents("需要访问 token 才能读取诊断记录");
-      renderConversationHistory();
       return;
     }
     state.events = [];
     renderEvents("诊断记录加载失败");
-    renderConversationHistory();
-  }
-}
-
-function renderConversationHistory() {
-  els.logList.replaceChildren();
-  if (!state.events.length) {
-    appendLog("pup", "豆豆", "汪，豆豆在这里。");
-    return;
-  }
-  const events = [...state.events].reverse();
-  for (const event of events) {
-    if (event.transcript) appendLog("child", "小朋友", event.transcript);
-    if (event.reply) {
-      appendLog(event.safety_triggered ? "warn" : "pup", event.safety_triggered ? "安全提醒" : "豆豆", event.reply);
-    }
-    const errors = eventErrors(event.errors);
-    if (errors) appendLog("warn", "错误", errors);
   }
 }
 
@@ -156,6 +129,13 @@ function renderEvent(event) {
     eventBadge(event.source || "-", sourceClass(event.source)),
     eventBadge(formatEventTotal(event.timings || {}), ""),
   );
+  const timings = event.timings || {};
+  if (timings.turn_total_ms && timings.playback_ms) {
+    meta.append(eventBadge(`开口 ${formatDuration(Math.max(0, timings.turn_total_ms - timings.playback_ms))}`, ""));
+  }
+  if (timings.audio_duration_ms) {
+    meta.append(eventBadge(`录音 ${formatDuration(timings.audio_duration_ms)}`, ""));
+  }
   if (event.tts_cache) meta.append(eventBadge(`TTS ${event.tts_cache}`, ""));
 
   const body = document.createElement("div");
@@ -318,7 +298,6 @@ function renderActivities() {
 }
 
 async function sendActivity(activity) {
-  appendLog("child", "活动", activity.label);
   setBusy("豆豆想一想");
   try {
     const response = await postJSON("/api/chat", { text: activity.prompt });
@@ -349,7 +328,6 @@ async function loadHealth() {
       els.modePill.textContent = "未授权";
       els.modeText.textContent = "401";
       els.voiceNote.textContent = "访问 token 缺失或错误";
-      appendLog("warn", "授权", "请用带 token 的链接打开，或清除后重新设置。");
     } else {
       els.modePill.textContent = "离线";
       els.modeText.textContent = "error";
@@ -488,14 +466,11 @@ async function sendRecognizedText(text) {
   try {
     if (!text) {
       const fallback = "嗯嗯";
-      appendLog("child", "小朋友", fallback);
       setBusy("豆豆想一想");
       const response = await postJSON("/api/chat", { text: fallback });
       handleDogResponse({ ...response, source: "browser_stt_empty" });
       return;
     }
-
-    appendLog("child", "小朋友", text);
     setBusy("豆豆想一想");
     const response = await postJSON("/api/chat", { text });
     handleDogResponse({ ...response, source: `browser_stt/${response.source || "chat"}` });
@@ -520,7 +495,6 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
     const response = await fetch("/api/voice", { method: "POST", headers: authHeaders(), body: form });
     if (!response.ok) throw await responseError(response);
     const payload = await response.json();
-    if (payload.transcript) appendLog("child", "小朋友", payload.transcript);
     handleDogResponse(payload);
   } catch (error) {
     showError(error);
@@ -529,15 +503,13 @@ async function sendRecording(blob, mimeType, filename, durationMs, peakLevel) {
 
 async function handleDogResponse(payload) {
   const reply = payload.reply || "豆豆没有想好。";
-  const className = payload.safety?.triggered ? "warn" : "pup";
   els.replyText.textContent = reply;
   els.modeText.textContent = payload.mode || "-";
   els.sourceText.textContent = payload.source || "-";
-  appendLog(className, payload.safety?.triggered ? "安全提醒" : "豆豆", reply);
-
-  if (payload.ai_error) appendLog("warn", "API", payload.ai_error);
-  if (payload.tts_error) appendLog("warn", "TTS", payload.tts_error);
-  if (payload.timings) appendLog("pup", "耗时", formatTimings(payload.timings));
+  if (payload.ai_error || payload.tts_error) {
+    els.voiceNote.textContent = payload.ai_error || payload.tts_error;
+  }
+  loadEvents().catch(() => {});
 
   if (payload.audio_base64 && payload.audio_mime) {
     const played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
@@ -545,21 +517,6 @@ async function handleDogResponse(payload) {
   } else {
     speakInBrowser(reply);
   }
-  loadEvents().catch(() => {});
-}
-
-function appendLog(kind, speaker, content) {
-  const item = document.createElement("article");
-  item.className = `log-item ${kind}`;
-  const speakerEl = document.createElement("div");
-  speakerEl.className = "speaker";
-  speakerEl.textContent = speaker;
-  const contentEl = document.createElement("div");
-  contentEl.className = "content";
-  contentEl.textContent = content;
-  item.append(speakerEl, contentEl);
-  els.logList.append(item);
-  els.logList.scrollTop = els.logList.scrollHeight;
 }
 
 function setBusy(text) {
@@ -604,27 +561,8 @@ function stopRecordingMeter() {
 function showError(error) {
   const message = error?.message || String(error);
   els.replyText.textContent = "豆豆这里出了一点小问题。";
-  appendLog("warn", error?.status === 401 ? "授权" : "错误", message);
-}
-
-function formatTimings(timings) {
-  const parts = [timings.turn_total_ms
-    ? `完整一轮 ${formatDuration(timings.turn_total_ms)}`
-    : `后端 ${formatDuration(timings.total_ms || 0)}`];
-  if (timings.upload_ms) parts.push(`上传 ${formatDuration(timings.upload_ms)}`);
-  if (timings.stt_ms) parts.push(`听写 ${timings.stt_ms}ms`);
-  if (timings.reply_ms) parts.push(`回复 ${timings.reply_ms}ms`);
-  if (timings.tts_ms) parts.push(`合成 ${timings.tts_ms}ms`);
-  if (timings.tts_first_audio_ms) parts.push(`首音 ${formatDuration(timings.tts_first_audio_ms)}`);
-  if (timings.playback_ms) parts.push(`播放 ${formatDuration(timings.playback_ms)}`);
-  if (timings.audio_duration_ms) parts.push(`录音 ${(timings.audio_duration_ms / 1000).toFixed(1)}s`);
-  if (timings.audio_peak) parts.push(`音量 ${formatAudioLevel(timings.audio_peak)}`);
-  if (timings.audio_bytes) parts.push(`音频 ${Math.round(timings.audio_bytes / 1024)}KB`);
-  return parts.join(" / ");
-}
-
-function formatAudioLevel(value) {
-  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+  els.sourceText.textContent = error?.status === 401 ? "unauthorized" : "error";
+  els.voiceNote.textContent = message;
 }
 
 async function fetchJSON(url) {

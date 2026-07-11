@@ -434,7 +434,7 @@ body.recording .mic-button {
 
 .debug-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(170px, 0.85fr) auto minmax(220px, 1.15fr);
+  grid-template-rows: auto auto auto minmax(320px, 1fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -483,15 +483,6 @@ body.recording .mic-button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-  padding: 16px;
-  overflow: auto;
 }
 
 .events-head {
@@ -656,42 +647,6 @@ body.recording .mic-button {
   background: white;
   font-weight: 900;
   text-align: center;
-}
-
-.log-item {
-  border: 2px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: white;
-}
-
-.log-item .speaker {
-  padding: 8px 10px;
-  border-bottom: 2px solid var(--line);
-  background: #f5f0e7;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.log-item .content {
-  padding: 12px 10px;
-  line-height: 1.45;
-}
-
-.log-item.pup .speaker {
-  background: #dff8ef;
-  color: var(--teal);
-}
-
-.log-item.warn .speaker {
-  background: #ffe1d9;
-  color: #9d2f20;
-}
-
-.log-item.activity .speaker {
-  background: #fff0b9;
-  color: #735300;
 }
 
 @keyframes dog-breathe {

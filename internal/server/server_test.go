@@ -126,7 +126,7 @@ func TestSpeechCachesTTS(t *testing.T) {
 
 func TestSpeechStreamEmitsChunksAndPersistsCache(t *testing.T) {
 	dir := t.TempDir()
-	voice := &testStreamingVoiceProvider{chunks: [][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}}}
+	voice := &testStreamingVoiceProvider{chunks: [][]byte{bytes.Repeat([]byte{1}, 10_000), bytes.Repeat([]byte{2}, 10_000)}}
 	first := New(Config{Voice: voice, SpeechCacheDir: dir})
 	firstEvents := requestSpeechStream(t, first, "豆豆流式说话")
 	if len(firstEvents) != 3 || firstEvents[0].Type != "audio" || firstEvents[1].Type != "audio" || firstEvents[2].Type != "done" {
@@ -142,20 +142,42 @@ func TestSpeechStreamEmitsChunksAndPersistsCache(t *testing.T) {
 	restartedVoice := &testStreamingVoiceProvider{chunks: voice.chunks}
 	restarted := New(Config{Voice: restartedVoice, SpeechCacheDir: dir})
 	cachedEvents := requestSpeechStream(t, restarted, "豆豆流式说话")
-	if len(cachedEvents) != 2 || cachedEvents[0].Type != "audio" || cachedEvents[1].Type != "done" {
-		t.Fatalf("cached events = %#v", cachedEvents)
+	if len(cachedEvents) != 4 || cachedEvents[0].Type != "audio" || cachedEvents[1].Type != "audio" ||
+		cachedEvents[2].Type != "audio" || cachedEvents[3].Type != "done" {
+		t.Fatalf("cached event types = %v", speechStreamEventTypes(cachedEvents))
 	}
-	if cachedEvents[0].Cache != "stream" || cachedEvents[1].Cache != "stream" {
-		t.Fatalf("cached event sources = %q, %q", cachedEvents[0].Cache, cachedEvents[1].Cache)
+	for _, event := range cachedEvents {
+		if event.Cache != "stream" {
+			t.Fatalf("cached event source = %q, want stream", event.Cache)
+		}
 	}
 	if calls := restartedVoice.streamCalls.Load(); calls != 0 {
 		t.Fatalf("stream calls after restart = %d, want 0", calls)
 	}
-	want := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-	got, err := base64.StdEncoding.DecodeString(cachedEvents[0].AudioBase64)
-	if err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("cached audio = %v err=%v, want %v", got, err, want)
+	var got bytes.Buffer
+	for _, event := range cachedEvents[:len(cachedEvents)-1] {
+		chunk, err := base64.StdEncoding.DecodeString(event.AudioBase64)
+		if err != nil {
+			t.Fatalf("decode cached audio: %v", err)
+		}
+		got.Write(chunk)
 	}
+	want := bytes.Join(voice.chunks, nil)
+	if !bytes.Equal(got.Bytes(), want) {
+		t.Fatalf("cached audio bytes = %d, want %d", got.Len(), len(want))
+	}
+	firstChunk, err := base64.StdEncoding.DecodeString(cachedEvents[0].AudioBase64)
+	if err != nil || len(firstChunk) != streamAudioChunkBytes {
+		t.Fatalf("first cached chunk bytes = %d err=%v, want %d", len(firstChunk), err, streamAudioChunkBytes)
+	}
+}
+
+func speechStreamEventTypes(events []speechStreamEvent) []string {
+	types := make([]string, 0, len(events))
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	return types
 }
 
 func TestSpeechStreamFallsBackForNonStreamingProvider(t *testing.T) {

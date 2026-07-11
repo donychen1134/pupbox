@@ -5,7 +5,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 ## Current Features
 
 - Go HTTP backend with no third-party Go dependencies.
-- Parent/debug page with transcript and activity buttons.
+- Parent/debug page with newest-first persisted diagnostics and activity buttons.
 - Child-facing `toy.html` mode that simulates a single-button plush toy.
 - Mock mode that runs without an OpenAI API key.
 - Chrome Web Speech fallback in mock mode for low-cost local voice testing.
@@ -278,7 +278,7 @@ X-Pupbox-Access-Token: <token>
 
 Browser requests also send an optional `X-Pupbox-Session-ID` header. It is an anonymous conversation identifier, not an authentication credential, and is only retained in server memory.
 
-The child page requests `/api/voice?tts=off` first so STT and the reply are available without waiting for a complete audio file. It then calls `/api/speech-stream`, which relays official DashScope SSE PCM chunks as NDJSON and schedules them through Web Audio. Cached replies and providers without streaming support use one complete audio event instead. After playback, the browser posts protected timing data to `/api/turn-metrics`; the existing JSONL event is updated by `trace_id` instead of creating a duplicate event.
+The child page requests `/api/voice?tts=off` first so STT and the reply are available without waiting for a complete audio file. It then calls `/api/speech-stream`, which relays official DashScope SSE PCM chunks as NDJSON and schedules them through Web Audio. Persisted PCM replies are re-chunked during cache playback so a cache hit does not wait for one large Base64 event. Providers without streaming support use one complete audio event instead. After playback, the browser posts protected timing data to `/api/turn-metrics`; the existing JSONL event is updated by `trace_id` instead of creating a duplicate event.
 
 Child-page audio uses full application gain and follows the iPhone media volume. The web page cannot read or set the device's system volume; use the hardware volume buttons while audio is playing. The microphone track is stopped before reply playback.
 
@@ -314,7 +314,7 @@ Voice and chat responses include timing diagnostics:
 }
 ```
 
-`GET /api/events?limit=50` returns recent persisted conversation diagnostics from the JSONL event log. Events include transcript, reply, source, safety route, activity route, upload/STT/Qwen/TTS/playback timings, TTS cache source, provider errors, and whether a protected diagnostic recording is available. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
+`GET /api/events?limit=50` returns newest-first persisted conversation diagnostics from the JSONL event log. The parent page uses this as its single history view rather than rendering a second chronological transcript. It highlights recording duration and the wait from button release to first audio, alongside upload/STT/Qwen/TTS/playback timings, TTS cache source, provider errors, safety and activity routes, and protected diagnostic recordings. The log retains at most `PUPBOX_EVENT_LOG_LIMIT` events. Audio bytes, API keys, access tokens, session IDs, and client IPs are not stored in the event log.
 
 ## Local Automation
 
