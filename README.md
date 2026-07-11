@@ -117,7 +117,7 @@ export PUPBOX_STT_TRIM_SILENCE=true
 export PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
 export PUPBOX_TTS_CACHE_LIMIT=512
 export PUPBOX_TTS_PREWARM=true
-export PUPBOX_TTS_PREWARM_LIMIT=48
+export PUPBOX_TTS_PREWARM_LIMIT=80
 # Optional, parent-only diagnostic recording playback:
 export PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 export PUPBOX_RECORDING_LIMIT=20
@@ -143,7 +143,7 @@ https://pupbox.example.com/toy.html?clearToken=1
 
 See [docs/deploy-vps.md](docs/deploy-vps.md) for the GitHub Release, systemd, and Caddy deployment path. The VPS does not need Go installed when using release packages.
 
-See [docs/hardware-roadmap.md](docs/hardware-roadmap.md) for the staged path from phone validation to an ESP32-S3 bench prototype and a supervised plush-dog test.
+See [docs/software-roadmap.md](docs/software-roadmap.md) for the remaining phone-validation work and [docs/hardware-roadmap.md](docs/hardware-roadmap.md) for the staged path to an ESP32-S3 bench prototype and a supervised plush-dog test.
 
 The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 
@@ -344,11 +344,12 @@ Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html
 1. Confirm the diagnostics page shows the expected provider, voice, and speed, and the child page says `在线`.
 2. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should acknowledge immediately with a local melody and still respond with a simple activity.
 3. Tap quickly without speaking. The page should reject the short recording without sending it to STT.
-4. Say `豆豆讲故事` several times. The stories should rotate and remain short enough to finish before the child loses attention.
+4. Say `豆豆讲故事` several times. Stories should be selected randomly without repeating within the current session and remain short enough to finish before the child loses attention.
 5. Say `豆豆猜动物`, answer the clue, and check whether the next reply follows the context.
-6. Say `我想玩插座`. The dog should route to a caregiver safety reply.
-7. Check whether the child understands the reply without looking at the screen.
-8. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
+6. Try `我们去旅行`, `一起过家家`, and `玩魔法变变变`; each should start a short voice-only imagination game.
+7. Say `我想玩插座`. The dog should route to a caregiver safety reply.
+8. Check whether the child understands the reply without looking at the screen.
+9. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
 
 ## Safety Rules
 

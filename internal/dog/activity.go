@@ -1,6 +1,8 @@
 package dog
 
 import (
+	"crypto/rand"
+	"math/big"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -15,6 +17,9 @@ var activitySequences = map[string]*atomic.Uint64{
 	"sound_game":   {},
 	"clap":         {},
 	"comfort":      {},
+	"adventure":    {},
+	"pretend_play": {},
+	"magic":        {},
 	"presence":     {},
 	"greeting":     {},
 	"chat":         {},
@@ -90,6 +95,27 @@ func Activities() []Activity {
 			Action:   "tail_wag",
 		},
 		{
+			ID:       "adventure",
+			Label:    "旅行",
+			Prompt:   "豆豆去旅行",
+			Reply:    "小火车呜呜出发啦。前面是花花森林和蓝蓝海边，你想去哪边？",
+			Category: "imagination",
+		},
+		{
+			ID:       "pretend_play",
+			Label:    "过家家",
+			Prompt:   "豆豆过家家",
+			Reply:    "豆豆的小商店开门啦。今天有苹果和草莓，你想买哪个？",
+			Category: "imagination",
+		},
+		{
+			ID:       "magic",
+			Label:    "魔法",
+			Prompt:   "豆豆变魔法",
+			Reply:    "变变变，豆豆把一片纸巾变成了白云。你想让白云下小雨，还是下花瓣？",
+			Category: "imagination",
+		},
+		{
 			ID:       "chat",
 			Label:    "聊天",
 			Prompt:   "豆豆聊天",
@@ -156,6 +182,15 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "唱歌", "唱个歌", "唱一个", "唱一首", "唱首歌", "声音游戏", "学声音") ||
 		equalsAny(normalized, "音乐", "声音"):
 		return byID("sound_game")
+	case containsAny(normalized, "去旅行", "坐火车", "去森林", "去海边", "去探险", "想象旅行", "旅行游戏") ||
+		equalsAny(normalized, "旅行", "探险", "出发"):
+		return byID("adventure")
+	case containsAny(normalized, "过家家", "开商店", "开餐厅", "做饭游戏", "喂娃娃", "玩娃娃", "茶话会") ||
+		equalsAny(normalized, "做饭", "商店", "餐厅", "娃娃"):
+		return byID("pretend_play")
+	case containsAny(normalized, "变魔法", "魔法游戏", "玩魔法", "变变变", "变一个") ||
+		equalsAny(normalized, "魔法", "变身"):
+		return byID("magic")
 	case containsAny(normalized, "玩颜色", "找颜色", "找红色", "找蓝色", "找黄色", "找绿色") ||
 		equalsAny(normalized, "颜色", "红色", "蓝色", "黄色", "绿色"):
 		return byID("color_hunt")
@@ -178,9 +213,12 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 		return Activity{}, false
 	}
 	if isStoryAffirmation(normalized) && (hasPendingStoryOffer(history) || hasRecentActivity(history, "story")) {
-		return byID("story")
+		return activityWithHistory("story", history)
 	}
 	if activity, ok := PlanActivity(text); ok {
+		if activity.ID == "story" {
+			activity.Reply = randomReplyExcluding("story", history, activity.Reply)
+		}
 		return activity, true
 	}
 	if !containsAny(normalized, "再讲一个", "再来一个", "再听一个", "再说一个话", "再亲一个", "讲一个新的", "讲个新的", "换一个") {
@@ -189,10 +227,46 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
 		previous := normalizeToddlerIntentText(history[i].User)
 		if history[i].ActivityID == "story" || containsAny(previous, "故事", "古事", "古是", "鼓事", "故是") {
-			return byID("story")
+			return activityWithHistory("story", history)
 		}
 	}
 	return Activity{}, false
+}
+
+func activityWithHistory(id string, history []Turn) (Activity, bool) {
+	activity, ok := byID(id)
+	if !ok {
+		return Activity{}, false
+	}
+	activity.Reply = randomReplyExcluding(id, history, activity.Reply)
+	return activity, true
+}
+
+func randomReplyExcluding(id string, history []Turn, fallback string) string {
+	replies := activityReplyVariants[id]
+	if len(replies) == 0 {
+		return fallback
+	}
+	used := make(map[string]bool, len(history))
+	for _, turn := range history {
+		if turn.ActivityID == id {
+			used[turn.Reply] = true
+		}
+	}
+	candidates := make([]string, 0, len(replies))
+	for _, reply := range replies {
+		if !used[reply] {
+			candidates = append(candidates, reply)
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = replies
+	}
+	index, err := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
+	if err != nil {
+		return candidates[0]
+	}
+	return candidates[index.Int64()]
 }
 
 func hasRecentActivity(history []Turn, activityID string) bool {
@@ -332,8 +406,8 @@ func nextActivityReply(id, fallback string) string {
 
 // PrewarmReplies returns reviewed fixed replies in the order most useful to a child session.
 func PrewarmReplies() []string {
-	replies := make([]string, 0, 64)
-	seen := make(map[string]bool, 64)
+	replies := make([]string, 0, 96)
+	seen := make(map[string]bool, 96)
 	appendReply := func(reply string) {
 		reply = strings.TrimSpace(reply)
 		if reply == "" || seen[reply] {
@@ -355,6 +429,9 @@ func PrewarmReplies() []string {
 	}
 	for _, id := range []string{
 		"story",
+		"adventure",
+		"pretend_play",
+		"magic",
 		"poem",
 		"animal_guess",
 		"color_hunt",
@@ -380,6 +457,38 @@ var activityReplyVariants = map[string][]string{
 		"小兔子的风筝挂在矮树上。豆豆摇摇树枝，风筝轻轻落进了小兔子的怀里。",
 		"清晨，小花还在睡觉。豆豆对它轻轻说早安，小花慢慢张开了彩色花瓣。",
 		"豆豆听见纸箱里有沙沙声，原来是小刺猬在躲雨。它们挤在一起，听雨点唱歌。",
+		"云朵开了一家小面包店。豆豆买了一块软软的云朵面包，咬一口，嘴边飘出一朵小白云。",
+		"小蜗牛要给奶奶送信，可是路好远。豆豆陪它慢慢走，天黑前终于把信送到啦。",
+		"一只小萤火虫忘了怎么发光。豆豆陪它数一、二、三，小肚子忽然亮成了一盏小灯。",
+		"小熊打了一个彩虹嗝，红橙黄绿都飘出来。豆豆笑着说，再来一个蓝色的小嗝吧。",
+		"池塘要开音乐会。青蛙咕呱唱歌，小雨滴答伴奏，豆豆用小小声的汪来打拍子。",
+		"小企鹅的围巾被风吹走了。豆豆追着围巾跑，最后围巾轻轻落在雪人的脖子上。",
+		"一颗小种子怕黑，不敢钻进泥土。豆豆陪它听了一夜雨，早晨它长出两片嫩叶。",
+		"豆豆捡到一颗蓝纽扣，不知道是谁的。原来月亮的小外套少了一颗，豆豆请风把纽扣送上天。",
+	},
+	"adventure": {
+		"小火车呜呜出发啦。前面是花花森林和蓝蓝海边，你想去哪边？",
+		"豆豆的小船轻轻摇，水里游来一条金色小鱼。我们跟小鱼走，还是去找小岛？",
+		"我们坐上软软的云朵车。左边有彩虹桥，右边有月亮路，你来选一条。",
+		"山洞里传来滴答滴答，像谁在唱歌。我们轻轻往前走，还是先喊一声你好？",
+		"纸飞机带着豆豆飞过屋顶。前面有一座糖果城和一片积木森林，我们去哪儿？",
+		"月亮铺下一条亮亮的小路。豆豆带上一块饼干，和你一步一步去看星星。",
+	},
+	"pretend_play": {
+		"豆豆的小商店开门啦。今天有苹果和草莓，你想买哪个？",
+		"小厨房咕嘟咕嘟煮汤。放一颗胡萝卜，还是放一片小青菜？",
+		"娃娃茶会开始啦。豆豆端来草莓水和香蕉饼，你想先尝哪一个？",
+		"豆豆的小餐厅来了客人。小兔想吃面条，小熊想吃米饭，我们先给谁做？",
+		"玩具快递站有两个包裹，一个轻轻的，一个会叮当响。你想先送哪个？",
+		"积木修理铺开门啦。小汽车少了一个轮子，我们找圆轮子，还是方积木？",
+	},
+	"magic": {
+		"变变变，豆豆把一片纸巾变成了白云。你想让白云下小雨，还是下花瓣？",
+		"咕噜咕噜，豆豆把小石头变成了面包。你想要圆面包，还是星星面包？",
+		"颜色魔法开始啦。红色和黄色抱一抱，猜猜会变成什么颜色？",
+		"声音魔法来了。轻轻说一声喵，它就变成小猫；说一声汪，它就变成小狗。",
+		"大大大，小纽扣变成大月亮；小小小，大气球变成小豆子。你想变大还是变小？",
+		"豆豆挥一挥想象魔法棒，房间里飘起彩色泡泡。你想要蓝泡泡，还是粉泡泡？",
 	},
 	"poem": {
 		"床前明月光，疑是地上霜。小朋友看见亮亮的月光，会想起温暖的家。",

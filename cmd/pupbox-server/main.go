@@ -61,7 +61,7 @@ func main() {
 			select {
 			case <-timer.C:
 				replies := dog.PrewarmReplies()
-				if limit := envInt("PUPBOX_TTS_PREWARM_LIMIT", 48); limit > 0 && limit < len(replies) {
+				if limit := envInt("PUPBOX_TTS_PREWARM_LIMIT", 80); limit > 0 && limit < len(replies) {
 					replies = replies[:limit]
 				}
 				srv.PrewarmSpeech(runCtx, replies)

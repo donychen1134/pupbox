@@ -57,6 +57,9 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		{text: "找 红 色", id: "color_hunt"},
 		{text: "旺旺", id: "clap"},
 		{text: "我们玩声音游戏", id: "sound_game"},
+		{text: "我们坐火车去旅行", id: "adventure"},
+		{text: "豆豆一起过家家", id: "pretend_play"},
+		{text: "玩魔法变变变", id: "magic"},
 	}
 	for _, tt := range tests {
 		got, ok := PlanActivity(tt.text)
@@ -136,6 +139,22 @@ func TestStoryActivityRotatesContent(t *testing.T) {
 	}
 }
 
+func TestStoryActivityWithHistoryAvoidsRecentReplies(t *testing.T) {
+	stories := activityReplyVariants["story"]
+	history := make([]Turn, 0, len(stories)-1)
+	for _, reply := range stories[:len(stories)-1] {
+		history = append(history, Turn{User: "讲故事", Reply: reply, ActivityID: "story"})
+	}
+
+	activity, ok := PlanActivityWithHistory("再讲一个故事", history)
+	if !ok || activity.ID != "story" {
+		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
+	}
+	if activity.Reply != stories[len(stories)-1] {
+		t.Fatalf("reply = %q, want only unused story %q", activity.Reply, stories[len(stories)-1])
+	}
+}
+
 func TestStoryFollowUpUsesRecentHistory(t *testing.T) {
 	history := []Turn{{User: "你给我讲个故事吧", Reply: "从前有一只小狗。", ActivityID: "story"}}
 	activity, ok := PlanActivityWithHistory("再讲一个", history)
@@ -205,17 +224,17 @@ func TestGreetingActivityRotatesContent(t *testing.T) {
 
 func TestPrewarmPrioritizesCommonConversationReplies(t *testing.T) {
 	first := PrewarmReplies()
-	if len(first) > 48 {
-		first = first[:48]
+	if len(first) > 80 {
+		first = first[:80]
 	}
 	seen := make(map[string]bool, len(first))
 	for _, reply := range first {
 		seen[reply] = true
 	}
-	for _, id := range []string{"presence", "greeting", "chat"} {
+	for _, id := range []string{"presence", "greeting", "chat", "story", "adventure", "pretend_play", "magic"} {
 		for _, reply := range activityReplyVariants[id] {
 			if !seen[reply] {
-				t.Fatalf("first 48 prewarm replies do not include %s reply %q", id, reply)
+				t.Fatalf("first 80 prewarm replies do not include %s reply %q", id, reply)
 			}
 		}
 	}

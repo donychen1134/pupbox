@@ -96,7 +96,7 @@ PUPBOX_EVENT_LOG_LIMIT=500
 PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
 PUPBOX_TTS_CACHE_LIMIT=512
 PUPBOX_TTS_PREWARM=true
-PUPBOX_TTS_PREWARM_LIMIT=48
+PUPBOX_TTS_PREWARM_LIMIT=80
 # Optional parent-only diagnostic playback. Keep short retention.
 PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 PUPBOX_RECORDING_LIMIT=20
