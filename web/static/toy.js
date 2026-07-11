@@ -296,7 +296,7 @@ async function handleDogResponse(payload, turn = {}) {
     played = await playBase64Audio(payload.audio_base64, payload.audio_mime);
     playbackMS = elapsedClientMS(playbackStartedAt);
   } else if (hasServerVoice() && state.health?.tts_streaming) {
-    const playServerAudio = payload.activity?.id === "story" ? playSpeechFile : playSpeechStream;
+    const playServerAudio = supportsCompleteSpeechAudio() ? playSpeechFile : playSpeechStream;
     streamResult = await playServerAudio(reply, () => {
       playbackStartedAt = performance.now();
       setPhase("speaking", speakingState, "等一下");
@@ -323,6 +323,12 @@ async function handleDogResponse(payload, turn = {}) {
     tts_cache: streamResult.cache || (played ? "complete" : "browser-fallback"),
     playback_error: streamResult.error || "",
   });
+}
+
+function supportsCompleteSpeechAudio() {
+  const format = String(state.health?.tts_format || "").toLowerCase();
+  const mime = format === "opus" ? "audio/ogg; codecs=opus" : "audio/mpeg";
+  return Boolean(audioPlayer().canPlayType(mime));
 }
 
 async function playSpeechFile(text, onPlaybackReady) {
@@ -974,4 +980,4 @@ function reportTurnMetrics(traceID, metrics) {
   }).catch(() => {});
 }
 
-export { createPCMPlayer, playSpeechFile };
+export { createPCMPlayer, playSpeechFile, supportsCompleteSpeechAudio };

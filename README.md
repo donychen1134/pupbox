@@ -117,7 +117,7 @@ export PUPBOX_STT_TRIM_SILENCE=true
 export PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
 export PUPBOX_TTS_CACHE_LIMIT=512
 export PUPBOX_TTS_PREWARM=true
-export PUPBOX_TTS_PREWARM_LIMIT=32
+export PUPBOX_TTS_PREWARM_LIMIT=48
 # Optional, parent-only diagnostic recording playback:
 export PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 export PUPBOX_RECORDING_LIMIT=20
@@ -220,7 +220,7 @@ export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
 export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
 export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
 export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3
-export PUPBOX_DASHSCOPE_TTS_FORMAT=mp3
+export PUPBOX_DASHSCOPE_TTS_FORMAT=opus
 export PUPBOX_DASHSCOPE_TTS_SPEED=0.88
 export PUPBOX_DASHSCOPE_TTS_SAMPLE_RATE=24000
 ```

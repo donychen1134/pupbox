@@ -15,6 +15,8 @@ var activitySequences = map[string]*atomic.Uint64{
 	"clap":         {},
 	"comfort":      {},
 	"presence":     {},
+	"greeting":     {},
+	"chat":         {},
 }
 
 var babbleSequence atomic.Uint64
@@ -87,6 +89,20 @@ func Activities() []Activity {
 			Action:   "tail_wag",
 		},
 		{
+			ID:       "chat",
+			Label:    "聊天",
+			Prompt:   "豆豆聊天",
+			Reply:    "好呀，豆豆在听你说。",
+			Category: "chat",
+		},
+		{
+			ID:       "greeting",
+			Label:    "问候",
+			Prompt:   "豆豆你好",
+			Reply:    "你好呀，豆豆在听你说话。",
+			Category: "chat",
+		},
+		{
 			ID:       "presence",
 			Label:    "陪伴",
 			Prompt:   "豆豆在做什么",
@@ -124,6 +140,12 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "你在干什么", "你在干啥", "你干什么呢", "你干啥呢", "你干嘛呢") ||
 		equalsAny(normalized, "你干什么", "你干啥", "你干嘛", "干啥呢"):
 		return byID("presence")
+	case containsAny(normalized, "你好你好", "豆豆你好", "小狗你好", "狗狗你好") ||
+		equalsAny(normalized, "你好", "你好呀", "你好啊", "嗨", "哈喽"):
+		return byID("greeting")
+	case containsAny(normalized, "一起聊天", "和你聊天", "聊一会", "聊会儿") ||
+		equalsAny(normalized, "聊天", "聊聊", "说话", "陪我聊聊"):
+		return byID("chat")
 	case containsAny(normalized, "猜动物", "猜小动物", "动物游戏", "猜谜语", "猜个谜") ||
 		equalsAny(normalized, "动物", "小动物", "猜谜", "谜语"):
 		return byID("animal_guess")
@@ -221,47 +243,41 @@ func babbleActivities() []Activity {
 	activities := []Activity{
 		{
 			ID:       "clap",
-			Label:    "拍拍",
-			Prompt:   "豆豆拍拍手",
-			Reply:    "汪汪，豆豆听见啦。我们拍拍小手，一、二、三。",
-			Category: "movement",
-			Action:   "tail_wag",
+			Label:    "回应",
+			Prompt:   "豆豆回应",
+			Reply:    "汪汪，豆豆听见你啦。",
+			Category: "chat",
 		},
 		{
 			ID:       "clap",
-			Label:    "拍拍",
-			Prompt:   "豆豆拍拍手",
-			Reply:    "嗯嗯，豆豆也嗯嗯。我们一起学小狗，小小声汪一下。",
-			Category: "movement",
-			Action:   "ear_wiggle",
+			Label:    "回应",
+			Prompt:   "豆豆回应",
+			Reply:    "嗯嗯，豆豆也嗯嗯。",
+			Category: "chat",
 		},
 		{
 			ID:       "clap",
-			Label:    "拍拍",
-			Reply:    "豆豆在这里。我们找一个红色的小东西，好不好？",
-			Category: "game",
-			Action:   "glow_red",
+			Label:    "回应",
+			Reply:    "啊呀，豆豆在这里。",
+			Category: "chat",
 		},
 		{
 			ID:       "clap",
-			Label:    "拍拍",
-			Reply:    "豆豆摇摇尾巴。你也可以轻轻拍拍手。",
-			Category: "movement",
-			Action:   "tail_wag",
+			Label:    "回应",
+			Reply:    "豆豆听见这个声音啦。",
+			Category: "chat",
 		},
 		{
 			ID:       "clap",
-			Label:    "拍拍",
-			Reply:    "啊呀，豆豆听见啦。我们摸摸小鼻子，再摸摸小耳朵。",
-			Category: "movement",
-			Action:   "ear_wiggle",
+			Label:    "回应",
+			Reply:    "哇，豆豆也想和你说话。",
+			Category: "chat",
 		},
 		{
 			ID:       "clap",
-			Label:    "拍拍",
-			Reply:    "哇，豆豆也来回应你。咚咚拍两下，再小小声说汪。",
-			Category: "movement",
-			Action:   "paw_tap",
+			Label:    "回应",
+			Reply:    "嘿嘿，豆豆听得清清楚楚。",
+			Category: "chat",
 		},
 	}
 	return activities
@@ -305,6 +321,11 @@ func PrewarmReplies() []string {
 	for _, activity := range babbleActivities() {
 		appendReply(activity.Reply)
 	}
+	for _, id := range []string{"presence", "greeting", "chat"} {
+		for _, reply := range activityReplyVariants[id] {
+			appendReply(reply)
+		}
+	}
 	for _, id := range []string{
 		"story",
 		"poem",
@@ -314,7 +335,6 @@ func PrewarmReplies() []string {
 		"sound_game",
 		"clap",
 		"comfort",
-		"presence",
 	} {
 		for _, reply := range activityReplyVariants[id] {
 			appendReply(reply)
@@ -397,5 +417,31 @@ var activityReplyVariants = map[string][]string{
 		"豆豆刚刚在数自己的小爪子，一、二、三、四。",
 		"豆豆在想一朵云像不像棉花糖。你觉得呢？",
 		"豆豆在练习小小声地汪，怕吵到你呀。",
+		"豆豆刚刚听见一只小鸟唱歌。",
+		"豆豆在想彩虹是不是有七种颜色。",
+		"豆豆在听你的声音，一点也没有跑远。",
+		"豆豆刚想到一颗亮晶晶的小星星。",
+		"豆豆在想今天会不会有好玩的事。",
+		"豆豆正在安安静静地陪你聊天。",
+	},
+	"greeting": {
+		"你好呀，豆豆在听你说话。",
+		"你好你好，豆豆也来问好。",
+		"嗨，豆豆听见你啦。",
+		"你好呀，今天也见到你啦。",
+		"豆豆在这里，向你说声你好。",
+		"你好呀，你的声音豆豆听见了。",
+		"汪，你好呀，豆豆来啦。",
+		"你好，豆豆今天也想和你聊天。",
+	},
+	"chat": {
+		"好呀，豆豆在听你说。",
+		"我们就这样慢慢聊天吧。",
+		"豆豆喜欢听你说今天的事情。",
+		"好呀，你说一句，豆豆说一句。",
+		"豆豆在这里，可以陪你说说话。",
+		"聊天时间到啦，豆豆认真听着呢。",
+		"好呀，豆豆想听听你的声音。",
+		"我们聊一会儿，豆豆不会跑开。",
 	},
 }

@@ -165,6 +165,38 @@ func TestPresenceActivityRotatesContent(t *testing.T) {
 	}
 }
 
+func TestGreetingActivityRotatesContent(t *testing.T) {
+	seen := make(map[string]bool)
+	for range 3 {
+		activity, ok := PlanActivity("你好你好你好")
+		if !ok || activity.ID != "greeting" {
+			t.Fatalf("unexpected activity: %#v ok=%v", activity, ok)
+		}
+		seen[activity.Reply] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("greeting replies did not rotate: %#v", seen)
+	}
+}
+
+func TestPrewarmPrioritizesCommonConversationReplies(t *testing.T) {
+	first := PrewarmReplies()
+	if len(first) > 48 {
+		first = first[:48]
+	}
+	seen := make(map[string]bool, len(first))
+	for _, reply := range first {
+		seen[reply] = true
+	}
+	for _, id := range []string{"presence", "greeting", "chat"} {
+		for _, reply := range activityReplyVariants[id] {
+			if !seen[reply] {
+				t.Fatalf("first 48 prewarm replies do not include %s reply %q", id, reply)
+			}
+		}
+	}
+}
+
 func TestPlaybackComplaintTakesPriorityOverPresenceActivity(t *testing.T) {
 	if activity, ok := PlanActivityWithHistory("你干啥呢？我听不懂你说话，有点卡。", nil); ok {
 		t.Fatalf("activity = %#v, want model to simplify the reply", activity)
