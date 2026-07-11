@@ -137,8 +137,32 @@ func TestStoryActivityRotatesContent(t *testing.T) {
 }
 
 func TestStoryFollowUpUsesRecentHistory(t *testing.T) {
-	history := []Turn{{User: "你给我讲个故事吧", Reply: "从前有一只小狗。"}}
+	history := []Turn{{User: "你给我讲个故事吧", Reply: "从前有一只小狗。", ActivityID: "story"}}
 	activity, ok := PlanActivityWithHistory("再讲一个", history)
+	if !ok || activity.ID != "story" {
+		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
+	}
+}
+
+func TestStoryAffirmationContinuesPendingOffer(t *testing.T) {
+	history := []Turn{{User: "你想听故事吗", Reply: "豆豆再讲一个。要听吗？"}}
+	activity, ok := PlanActivityWithHistory("要听啊", history)
+	if !ok || activity.ID != "story" {
+		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
+	}
+}
+
+func TestStoryAffirmationContinuesRecentStory(t *testing.T) {
+	history := []Turn{{User: "讲个故事", Reply: "从前有一只小狗。", ActivityID: "story"}}
+	activity, ok := PlanActivityWithHistory("想听", history)
+	if !ok || activity.ID != "story" {
+		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
+	}
+}
+
+func TestStoryMisrecognitionContinuesRecentStory(t *testing.T) {
+	history := []Turn{{User: "讲故事", Reply: "从前有一只小狗。", ActivityID: "story"}}
+	activity, ok := PlanActivityWithHistory("再亲一个吧", history)
 	if !ok || activity.ID != "story" {
 		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
 	}
@@ -200,6 +224,20 @@ func TestPrewarmPrioritizesCommonConversationReplies(t *testing.T) {
 func TestPlaybackComplaintTakesPriorityOverPresenceActivity(t *testing.T) {
 	if activity, ok := PlanActivityWithHistory("你干啥呢？我听不懂你说话，有点卡。", nil); ok {
 		t.Fatalf("activity = %#v, want model to simplify the reply", activity)
+	}
+}
+
+func TestLongPresenceUtteranceKeepsSpecificTopicForModel(t *testing.T) {
+	text := "豆豆，你干啥呢？你怎么又不和我跳街舞了？"
+	if activity, ok := PlanActivityWithHistory(text, nil); ok {
+		t.Fatalf("activity = %#v, want model to continue the dance topic", activity)
+	}
+}
+
+func TestSingACompleteSongRoutesToSoundGame(t *testing.T) {
+	activity, ok := PlanActivity("豆豆，你给橙子唱个歌吧")
+	if !ok || activity.ID != "sound_game" {
+		t.Fatalf("activity = %#v ok=%v, want sound_game", activity, ok)
 	}
 }
 
@@ -265,5 +303,16 @@ func TestSpeechOnlyReplyRemovesUnsupportedToyInteraction(t *testing.T) {
 	}
 	if got := SpeechOnlyReply("豆豆摇尾巴。来碰爪子吧。"); got != "豆豆在听你说话呢。" {
 		t.Fatalf("unexpected all-removed fallback %q", got)
+	}
+}
+
+func TestClarificationReplyRepeatsPreviousIdea(t *testing.T) {
+	history := []Turn{{User: "你会跳什么舞", Reply: "豆豆会跳汪汪舞，恰恰恰。"}}
+	got, ok := ClarificationReply("你说啥呢？我听不懂。", history)
+	if !ok || !strings.Contains(got, "汪汪舞") {
+		t.Fatalf("clarification = %q ok=%v", got, ok)
+	}
+	if utf8.RuneCountInString(got) > 28 {
+		t.Fatalf("clarification is too long: %q", got)
 	}
 }

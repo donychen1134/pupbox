@@ -143,7 +143,9 @@ https://pupbox.example.com/toy.html?clearToken=1
 
 See [docs/deploy-vps.md](docs/deploy-vps.md) for the GitHub Release, systemd, and Caddy deployment path. The VPS does not need Go installed when using release packages.
 
-The browser also creates an anonymous per-page session ID. The server keeps at most six recent turns for 15 minutes so follow-ups such as `然后呢` can use context. Session context is memory-only and is not written to the JSONL event log.
+See [docs/hardware-roadmap.md](docs/hardware-roadmap.md) for the staged path from phone validation to an ESP32-S3 bench prototype and a supervised plush-dog test.
+
+The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 
 ## OpenAI Settings
 
@@ -216,7 +218,7 @@ Defaults:
 ```bash
 export PUPBOX_VOICE_PROVIDER=dashscope
 export PUPBOX_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com
-export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
+export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-plus-character
 export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
 export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
 export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3

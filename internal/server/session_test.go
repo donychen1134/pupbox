@@ -17,3 +17,11 @@ func TestContextualInputFlagsRepeatedQuestion(t *testing.T) {
 		t.Fatalf("repeat guidance missing from input: %q", input)
 	}
 }
+
+func TestContextualInputIncludesActivityState(t *testing.T) {
+	history := []dog.Turn{{User: "讲个故事", Reply: "从前有一只小狗。", ActivityID: "story"}}
+	input := contextualInput(history, "再来一个")
+	if !strings.Contains(input, "正在进行story活动") {
+		t.Fatalf("activity state missing from input: %q", input)
+	}
+}

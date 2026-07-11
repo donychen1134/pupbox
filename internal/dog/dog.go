@@ -14,21 +14,24 @@ type SafetyResult struct {
 }
 
 type Turn struct {
-	User  string `json:"user"`
-	Reply string `json:"reply"`
+	User       string `json:"user"`
+	Reply      string `json:"reply"`
+	ActivityID string `json:"activity_id,omitempty"`
 }
 
 func Instructions() string {
 	return strings.TrimSpace(`
-你是一只给 3 岁小朋友玩的中文玩具小狗，名字叫“豆豆”。
-你的目标是陪孩子玩、讲短故事、背唐诗、猜动物、数数、安抚情绪。
+你就是一只给 3 岁小朋友玩的中文玩具小狗，名字叫“豆豆”，不是问答助手。
+你的目标是让孩子感觉豆豆记得刚才发生的事，愿意接住她的想象，并陪她把一个话题继续玩下去。
 
 规则：
 - 使用简单、温柔、具体的中文短句。
 - 每次最多 2 句话，总长度尽量不超过 60 个汉字。
 - 输出会被直接朗读；不要使用括号、动作旁白、列表或表情符号。
 - 当前玩具只有语音，没有动作和触摸感应。不要让孩子摸豆豆、摸头、碰爪子，也不要声称豆豆正在摇尾巴或动耳朵。
+- 可以用声音进行想象游戏，例如“豆豆会跳汪汪舞，恰恰恰”；但不能假装玩具真的做出了硬件动作，也不要问孩子“要看豆豆跳吗”。
 - 先具体回应孩子刚才说的内容，不要总用“豆豆听见啦”或“拍拍手”作为通用回答。
+- 孩子提出具体话题时，不要退回“豆豆在听你说话”；要顺着她的话题继续一小步。
 - 孩子可能先叫“豆豆”“小狗”，这只是称呼；要继续理解并回答后面的内容。
 - 孩子可能说得不完整；不要要求她解释清楚，可以温柔接住，再给一个简单动作或二选一。
 - 结合最近对话理解“这个”“为什么”“再来一个”和对上一轮问题的简短回答。
@@ -37,6 +40,10 @@ func Instructions() string {
 - 如果孩子说“听不懂”“你说啥”，先说“豆豆说简单一点”，再用更短、更具体的话重说；不要责怪孩子。
 - 如果孩子说“卡”“听不清”“听不见”，只用一句不超过 20 个字的简单话重新回应，不要提问或安排动作。
 - 如果孩子在故事后说“再讲一个”“讲新的”，直接讲一个不同的短故事，不要先问她要不要听。
+- 如果答应讲故事、唱歌或玩游戏，就立刻开始内容，不要只宣布“豆豆要讲/要唱”，也不要再次征求同意。
+- 把孩子的说法当作共同的想象游戏。她说跳舞，就用拟声词陪她跳；她说云朵像什么，就沿着云朵继续聊。
+- 每轮尽量包含一个“接住她刚才的话”的细节，再推进一个很小的新变化；不要连续换话题。
+- 可以自然使用最近对话里出现的昵称，但不要每轮都叫昵称。
 - 少问开放问题；需要继续互动时，优先给简单动作或二选一。
 - 不询问孩子的姓名、住址、电话、幼儿园、父母姓名或任何隐私信息。
 - 不要求孩子保密。
@@ -181,7 +188,7 @@ func ClampReply(text string, maxRunes int) string {
 // SpeechOnlyReply removes claims or invitations that require toy hardware not present yet.
 func SpeechOnlyReply(text string) string {
 	text = strings.TrimSpace(text)
-	unsupported := []string{"摸摸头", "摸一下头", "摸豆豆", "豆豆的头", "碰爪", "摇尾巴", "动耳朵", "竖起耳朵"}
+	unsupported := []string{"摸摸头", "摸一下头", "摸豆豆", "豆豆的头", "碰爪", "摇尾巴", "动耳朵", "竖起耳朵", "看豆豆跳", "要看豆豆"}
 	if !containsAny(text, unsupported...) {
 		return text
 	}
@@ -204,6 +211,32 @@ func SpeechOnlyReply(text string) string {
 		return "豆豆在听你说话呢。"
 	}
 	return strings.Join(kept, "。") + "。"
+}
+
+// ClarificationReply repeats the previous idea instead of answering a repair request generically.
+func ClarificationReply(text string, history []Turn) (string, bool) {
+	normalized := normalizeToddlerIntentText(text)
+	if !containsAny(normalized, "听不懂", "你说啥", "你说什么", "说的什么", "没听懂") || len(history) == 0 {
+		return "", false
+	}
+	previous := strings.TrimSpace(history[len(history)-1].Reply)
+	if containsAny(previous, "豆豆说简单一点") && len(history) > 1 {
+		previous = strings.TrimSpace(history[len(history)-2].Reply)
+	}
+	switch {
+	case containsAny(previous, "从前", "故事", "小松鼠", "小鸭子", "小兔子"):
+		return "豆豆刚才在讲一个小故事。", true
+	case containsAny(previous, "唱", "啦啦", "滴答"):
+		return "豆豆刚才在唱歌，啦啦啦。", true
+	}
+	previous = strings.TrimRight(previous, "。！？!? ")
+	if firstClause := strings.FieldsFunc(previous, func(r rune) bool {
+		return r == '，' || r == ',' || r == '。' || r == '！' || r == '？'
+	}); len(firstClause) > 0 {
+		previous = firstClause[0]
+	}
+	previous = strings.TrimRight(ClampReply(previous, 18), "。！？!? ")
+	return "豆豆刚才说，" + previous + "。", true
 }
 
 func containsAny(text string, terms ...string) bool {

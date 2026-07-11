@@ -3,6 +3,7 @@ package dog
 import (
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 var activitySequences = map[string]*atomic.Uint64{
@@ -137,7 +138,7 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "讲故事", "讲个故事", "听故事", "说故事", "小狗故事", "新故事", "再讲一个故事", "讲个古事", "讲个古是", "讲个鼓事", "讲个故是") ||
 		equalsAny(normalized, "故事", "古事", "古是", "鼓事", "故是"):
 		return byID("story")
-	case containsAny(normalized, "你在干什么", "你在干啥", "你干什么呢", "你干啥呢", "你干嘛呢") ||
+	case (utf8.RuneCountInString(normalized) <= 12 && containsAny(normalized, "你在干什么", "你在干啥", "你干什么呢", "你干啥呢", "你干嘛呢")) ||
 		equalsAny(normalized, "你干什么", "你干啥", "你干嘛", "干啥呢"):
 		return byID("presence")
 	case containsAny(normalized, "你好你好", "豆豆你好", "小狗你好", "狗狗你好") ||
@@ -152,7 +153,7 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "数数", "数一数", "一起数", "数数字") ||
 		equalsAny(normalized, "数字", "一二三", "123"):
 		return byID("counting")
-	case containsAny(normalized, "唱歌", "唱一个", "唱首歌", "声音游戏", "学声音") ||
+	case containsAny(normalized, "唱歌", "唱个歌", "唱一个", "唱一首", "唱首歌", "声音游戏", "学声音") ||
 		equalsAny(normalized, "音乐", "声音"):
 		return byID("sound_game")
 	case containsAny(normalized, "玩颜色", "找颜色", "找红色", "找蓝色", "找黄色", "找绿色") ||
@@ -176,19 +177,45 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if containsAny(normalized, "听不懂", "听不清", "听不见", "不清楚", "有点卡", "太卡", "卡住") {
 		return Activity{}, false
 	}
+	if isStoryAffirmation(normalized) && (hasPendingStoryOffer(history) || hasRecentActivity(history, "story")) {
+		return byID("story")
+	}
 	if activity, ok := PlanActivity(text); ok {
 		return activity, true
 	}
-	if !equalsAny(normalized, "再讲一个", "再来一个", "讲一个新的", "讲个新的", "换一个") {
+	if !containsAny(normalized, "再讲一个", "再来一个", "再听一个", "再说一个话", "再亲一个", "讲一个新的", "讲个新的", "换一个") {
 		return Activity{}, false
 	}
 	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
 		previous := normalizeToddlerIntentText(history[i].User)
-		if containsAny(previous, "故事", "古事", "古是", "鼓事", "故是") {
+		if history[i].ActivityID == "story" || containsAny(previous, "故事", "古事", "古是", "鼓事", "故是") {
 			return byID("story")
 		}
 	}
 	return Activity{}, false
+}
+
+func hasRecentActivity(history []Turn, activityID string) bool {
+	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
+		if history[i].ActivityID == activityID {
+			return true
+		}
+	}
+	return false
+}
+
+func isStoryAffirmation(text string) bool {
+	return equalsAny(text, "想听", "要听", "要听啊", "好呀", "好啊", "好的", "可以", "嗯要听")
+}
+
+func hasPendingStoryOffer(history []Turn) bool {
+	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
+		reply := normalizeToddlerIntentText(history[i].Reply)
+		if containsAny(reply, "要听吗", "想听故事", "豆豆讲故事", "豆豆再讲一个") {
+			return true
+		}
+	}
+	return false
 }
 
 func stripDogAddress(text string) string {

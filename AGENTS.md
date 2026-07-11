@@ -85,7 +85,7 @@ Useful optional settings:
 
 ```bash
 export PUPBOX_VOICE_PROVIDER=dashscope
-export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-turbo
+export PUPBOX_DASHSCOPE_CHAT_MODEL=qwen-plus-character
 export PUPBOX_DASHSCOPE_STT_MODEL=qwen3-asr-flash
 export PUPBOX_DASHSCOPE_TTS_MODEL=cosyvoice-v3-flash
 export PUPBOX_DASHSCOPE_TTS_VOICE=longhuhu_v3

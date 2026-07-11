@@ -138,7 +138,7 @@ func New(cfg Config) *Server {
 		events:      events,
 		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
 		trimSTT:     cfg.TrimSTTSilence,
-		sessions:    NewSessionStore(128, 6, 15*time.Minute),
+		sessions:    NewSessionStore(128, 10, 30*time.Minute),
 		speechCache: make(map[string]cachedSpeech),
 		speechDisk:  speechDisk,
 		speechCalls: make(map[string]*speechCall),
@@ -310,7 +310,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
-	s.sessions.Append(sessionID, text, reply)
+	s.sessions.Append(sessionID, text, reply, activityID(activity))
 	s.recordConversation("chat", response, nil, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -612,7 +612,7 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
-	s.sessions.Append(sessionID, transcript, reply)
+	s.sessions.Append(sessionID, transcript, reply, activityID(activity))
 	s.recordConversation("voice", response, recording, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr), Recording: errorString(recordingErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -723,6 +723,9 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 	if safety.Triggered {
 		return safety.Reply, safety, nil, "safety", nil
 	}
+	if reply, ok := dog.ClarificationReply(text, history); ok {
+		return dog.SpeechOnlyReply(reply), safety, nil, "context:clarification", nil
+	}
 
 	if activity, ok := dog.PlanActivityWithHistory(text, history); ok {
 		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
@@ -739,6 +742,13 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 	}
 
 	return dog.SpeechOnlyReply(dog.MockReply(text)), safety, nil, "mock", nil
+}
+
+func activityID(activity *dog.Activity) string {
+	if activity == nil {
+		return ""
+	}
+	return activity.ID
 }
 
 func (s *Server) speak(r *http.Request, text string) ([]byte, string, error) {

@@ -49,7 +49,7 @@ func NewFromEnv() *Client {
 	return New(Config{
 		APIKey:     envAny("CHAT_ARCHIVE_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
 		BaseURL:    envDefault("PUPBOX_DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com"),
-		ChatModel:  envDefault("PUPBOX_DASHSCOPE_CHAT_MODEL", "qwen-turbo"),
+		ChatModel:  envDefault("PUPBOX_DASHSCOPE_CHAT_MODEL", "qwen-plus-character"),
 		STTModel:   envDefault("PUPBOX_DASHSCOPE_STT_MODEL", "qwen3-asr-flash"),
 		TTSModel:   envDefault("PUPBOX_DASHSCOPE_TTS_MODEL", "cosyvoice-v3-flash"),
 		TTSVoice:   envDefault("PUPBOX_DASHSCOPE_TTS_VOICE", "longhuhu_v3"),
@@ -65,7 +65,7 @@ func New(cfg Config) *Client {
 		apiKey:     strings.TrimSpace(cfg.APIKey),
 		baseURL:    strings.TrimRight(envDefaultValue(cfg.BaseURL, "https://dashscope.aliyuncs.com"), "/"),
 		http:       &http.Client{Timeout: 60 * time.Second},
-		chatModel:  envDefaultValue(cfg.ChatModel, "qwen-turbo"),
+		chatModel:  envDefaultValue(cfg.ChatModel, "qwen-plus-character"),
 		sttModel:   envDefaultValue(cfg.STTModel, "qwen3-asr-flash"),
 		ttsModel:   envDefaultValue(cfg.TTSModel, "cosyvoice-v3-flash"),
 		ttsVoice:   envDefaultValue(cfg.TTSVoice, "longhuhu_v3"),
@@ -130,7 +130,7 @@ func (c *Client) CreateResponse(ctx context.Context, instructions, input string)
 	payload := map[string]any{
 		"model":       c.chatModel,
 		"messages":    messages,
-		"temperature": 0.7,
+		"temperature": chatTemperature(c.chatModel),
 		"max_tokens":  180,
 	}
 
@@ -166,6 +166,13 @@ func (c *Client) CreateResponse(ctx context.Context, instructions, input string)
 		return "", errors.New("dashscope chat returned no content")
 	}
 	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+}
+
+func chatTemperature(model string) float64 {
+	if strings.Contains(strings.ToLower(model), "character") {
+		return 0.92
+	}
+	return 0.7
 }
 
 func (c *Client) Transcribe(ctx context.Context, audio []byte, filename, contentType string) (string, error) {
