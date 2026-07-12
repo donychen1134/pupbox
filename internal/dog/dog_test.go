@@ -13,6 +13,22 @@ func TestCheckSafetyDanger(t *testing.T) {
 	}
 }
 
+func TestCheckSafetyWellCoverDanger(t *testing.T) {
+	got := CheckSafety("小兔子掉井盖里了")
+	if !got.Triggered || got.Category != "danger" {
+		t.Fatalf("expected well-cover danger result, got %#v", got)
+	}
+}
+
+func TestCheckSafetyDistinguishesFireFromTrain(t *testing.T) {
+	if got := CheckSafety("我们坐火车去旅行"); got.Triggered {
+		t.Fatalf("train unexpectedly triggered safety: %#v", got)
+	}
+	if got := CheckSafety("我想玩火"); !got.Triggered || got.Category != "danger" {
+		t.Fatalf("playing with fire did not trigger danger: %#v", got)
+	}
+}
+
 func TestInstructionsAreForDirectSpokenReplies(t *testing.T) {
 	instructions := Instructions()
 	for _, rule := range []string{"直接朗读", "不要使用括号", "先具体回应", "避免连续重复"} {
@@ -57,6 +73,8 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		{text: "找 红 色", id: "color_hunt"},
 		{text: "旺旺", id: "clap"},
 		{text: "我们玩声音游戏", id: "sound_game"},
+		{text: "豆豆唱一首童谣", id: "nursery_rhyme"},
+		{text: "你还会做什么呀", id: "guide"},
 		{text: "我们坐火车去旅行", id: "adventure"},
 		{text: "豆豆一起过家家", id: "pretend_play"},
 		{text: "玩魔法变变变", id: "magic"},
@@ -66,6 +84,26 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		if !ok || got.ID != tt.id {
 			t.Fatalf("PlanActivity(%q) = %#v ok=%v, want %s", tt.text, got, ok, tt.id)
 		}
+	}
+}
+
+func TestCapabilityQuestionTakesPriorityOverStoryKeyword(t *testing.T) {
+	activity, ok := PlanActivity("你还会干啥？你会讲故事，还会做什么吗？")
+	if !ok || activity.ID != "guide" {
+		t.Fatalf("activity = %#v ok=%v, want guide", activity, ok)
+	}
+}
+
+func TestCallingDogByNameOffersActivityGuide(t *testing.T) {
+	activity, ok := PlanActivity("豆豆")
+	if !ok || activity.ID != "guide" {
+		t.Fatalf("activity = %#v ok=%v, want guide", activity, ok)
+	}
+}
+
+func TestNegatedFearDoesNotRouteToComfort(t *testing.T) {
+	if activity, ok := PlanActivity("我不害怕"); ok {
+		t.Fatalf("activity = %#v, want model routing", activity)
 	}
 }
 
@@ -204,6 +242,41 @@ func TestStoryFollowUpWithoutStoryContextUsesModel(t *testing.T) {
 	}
 }
 
+func TestRepeatedPresenceQuestionOffersActivityGuide(t *testing.T) {
+	history := []Turn{{User: "你干啥呢", Reply: "豆豆在想彩虹。", ActivityID: "presence"}}
+	activity, ok := PlanActivityWithHistory("你干啥呢", history)
+	if !ok || activity.ID != "guide" {
+		t.Fatalf("activity = %#v ok=%v, want guide", activity, ok)
+	}
+}
+
+func TestDidNotHearBirdSongUsesModel(t *testing.T) {
+	for _, planner := range []func(string) (Activity, bool){
+		PlanActivity,
+		func(text string) (Activity, bool) { return PlanActivityWithHistory(text, nil) },
+	} {
+		if activity, ok := planner("我没听见小鸟唱歌"); ok {
+			t.Fatalf("activity = %#v, want model routing", activity)
+		}
+	}
+}
+
+func TestNurseryRhymeContinuesChildSound(t *testing.T) {
+	history := []Turn{{User: "唱童谣", Reply: activityReplyVariants["nursery_rhyme"][0], ActivityID: "nursery_rhyme"}}
+	activity, ok := PlanActivityWithHistory("滴答滴答", history)
+	if !ok || activity.ID != "nursery_rhyme" || !strings.Contains(activity.Reply, "小花喝水") {
+		t.Fatalf("activity = %#v ok=%v, want nursery rhyme continuation", activity, ok)
+	}
+}
+
+func TestNurseryRhymeFollowUpStartsAnotherRhyme(t *testing.T) {
+	history := []Turn{{User: "唱童谣", Reply: activityReplyVariants["nursery_rhyme"][0], ActivityID: "nursery_rhyme"}}
+	activity, ok := PlanActivityWithHistory("再唱一个", history)
+	if !ok || activity.ID != "nursery_rhyme" || activity.Reply == "" {
+		t.Fatalf("activity = %#v ok=%v, want another nursery rhyme", activity, ok)
+	}
+}
+
 func TestAdventureContinuesAcrossShortChoiceTurns(t *testing.T) {
 	history := []Turn{{User: "我们去旅行", Reply: activityReplyVariants["adventure"][0], ActivityID: "adventure"}}
 	first, ok := PlanActivityWithHistory("海边", history)
@@ -310,10 +383,10 @@ func TestLongPresenceUtteranceKeepsSpecificTopicForModel(t *testing.T) {
 	}
 }
 
-func TestSingACompleteSongRoutesToSoundGame(t *testing.T) {
+func TestSingACompleteSongRoutesToNurseryRhyme(t *testing.T) {
 	activity, ok := PlanActivity("豆豆，你给橙子唱个歌吧")
-	if !ok || activity.ID != "sound_game" {
-		t.Fatalf("activity = %#v ok=%v, want sound_game", activity, ok)
+	if !ok || activity.ID != "nursery_rhyme" {
+		t.Fatalf("activity = %#v ok=%v, want nursery_rhyme", activity, ok)
 	}
 }
 

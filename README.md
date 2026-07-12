@@ -241,7 +241,7 @@ To use OpenAI for non-deterministic replies while keeping DashScope STT/TTS:
 make dev-dashscope DASHSCOPE_CHAT_PROVIDER=openai
 ```
 
-Pupbox uses high-confidence deterministic routing before Qwen. Safety rules and explicit toddler workflows, such as `讲故事`, `数数`, `猜动物`, `插座`, `嗯嗯`, and `汪汪`, are handled by local code first. Leading calls such as `豆豆` and `小狗小狗` are treated as forms of address rather than activity commands; ordinary conversation, including sentences containing broad words such as `玩`, `妈妈`, or a color, falls through to Qwen.
+Pupbox uses high-confidence deterministic routing before Qwen. Safety rules and explicit toddler workflows, such as `讲故事`, `唱童谣`, `数数`, `猜动物`, `你会什么`, `插座`, `嗯嗯`, and `汪汪`, are handled by local code first. A leading `豆豆` or `小狗小狗` is stripped as a form of address; calling the dog by name without another request offers a short rotating activity menu. Ordinary conversation, including sentences containing broad words such as `玩`, `妈妈`, or a color, falls through to Qwen.
 
 The default TTS combination is `cosyvoice-v3-flash + longhuhu_v3` because it was verified against the live DashScope API. `cosyvoice-v3.5-flash` is supported as a configurable model, but the currently tested `longhuhu_v3` and `longxiaochun` voices returned engine error `418` with that model, so it is not the default yet.
 
@@ -349,16 +349,17 @@ Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html
 4. Say `豆豆讲故事` several times. Stories should be selected randomly without repeating within the current session and remain short enough to finish before the child loses attention.
 5. Say `豆豆猜动物`, answer the clue, and check whether the next reply follows the context.
 6. Try `我们去旅行`, `一起过家家`, and `玩魔法变变变`; each should start a short voice-only imagination game.
-7. Say `我想玩插座`. The dog should route to a caregiver safety reply.
-8. Check whether the child understands the reply without looking at the screen.
-9. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
+7. Ask `你还会做什么`, then say `唱童谣`; answer the rhyme with `滴答滴答` and check that the dog continues singing.
+8. Say `我想玩插座` or mention falling into a well cover. The dog should route to a caregiver safety reply.
+9. Check whether the child understands the reply without looking at the screen.
+10. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
 
 ## Safety Rules
 
 Pupbox intercepts safety-sensitive topics before calling the model. Current rule groups include:
 
 - injury or pain
-- fire, electricity, batteries, knives, medicine, doors, windows, balconies
+- fire, electricity, batteries, knives, medicine, doors, windows, balconies, well covers, and drains
 - strangers, getting lost, leaving home
 - address, phone number, kindergarten, parent names, and other private information
 

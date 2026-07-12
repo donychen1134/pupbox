@@ -9,20 +9,22 @@ import (
 )
 
 var activitySequences = map[string]*atomic.Uint64{
-	"story":        {},
-	"poem":         {},
-	"animal_guess": {},
-	"color_hunt":   {},
-	"counting":     {},
-	"sound_game":   {},
-	"clap":         {},
-	"comfort":      {},
-	"adventure":    {},
-	"pretend_play": {},
-	"magic":        {},
-	"presence":     {},
-	"greeting":     {},
-	"chat":         {},
+	"story":         {},
+	"poem":          {},
+	"animal_guess":  {},
+	"color_hunt":    {},
+	"counting":      {},
+	"sound_game":    {},
+	"nursery_rhyme": {},
+	"guide":         {},
+	"clap":          {},
+	"comfort":       {},
+	"adventure":     {},
+	"pretend_play":  {},
+	"magic":         {},
+	"presence":      {},
+	"greeting":      {},
+	"chat":          {},
 }
 
 var babbleSequence atomic.Uint64
@@ -79,6 +81,13 @@ func Activities() []Activity {
 			Action:   "paw_tap",
 		},
 		{
+			ID:       "nursery_rhyme",
+			Label:    "童谣",
+			Prompt:   "豆豆唱童谣",
+			Reply:    "小雨点，滴滴答，跳到窗边看小花。你来唱，滴答滴答。",
+			Category: "listen",
+		},
+		{
 			ID:       "sound_game",
 			Label:    "声音",
 			Prompt:   "豆豆玩声音",
@@ -114,6 +123,13 @@ func Activities() []Activity {
 			Prompt:   "豆豆变魔法",
 			Reply:    "变变变，豆豆把一片纸巾变成了白云。你想让白云下小雨，还是下花瓣？",
 			Category: "imagination",
+		},
+		{
+			ID:       "guide",
+			Label:    "玩法",
+			Prompt:   "豆豆会玩什么",
+			Reply:    "豆豆会讲故事、猜动物，还会陪你过家家。你想先玩哪个？",
+			Category: "chat",
 		},
 		{
 			ID:       "chat",
@@ -152,12 +168,22 @@ func PlanActivity(text string) (Activity, bool) {
 	if t == "" {
 		return Activity{}, false
 	}
-	normalized := stripDogAddress(normalizeToddlerIntentText(t))
+	rawNormalized := normalizeToddlerIntentText(t)
+	if equalsAny(rawNormalized, "豆豆", "小狗", "狗狗", "小狗小狗") {
+		return byID("guide")
+	}
+	normalized := stripDogAddress(rawNormalized)
 	if normalized == "" {
+		return Activity{}, false
+	}
+	if containsAny(normalized, "听不清", "没听清", "听不见", "没听见") {
 		return Activity{}, false
 	}
 
 	switch {
+	case containsAny(normalized, "你还会干啥", "你还会干什么", "你还会做什么", "你会做什么", "你会干啥", "你会干什么", "你能做什么", "你能干啥", "可以玩什么", "有什么好玩", "都会什么") ||
+		equalsAny(normalized, "怎么玩", "玩什么", "干什么", "做什么"):
+		return byID("guide")
 	case containsAny(normalized, "背唐诗", "背古诗", "念唐诗", "念古诗", "读唐诗", "读古诗", "来首唐诗", "来一首唐诗") ||
 		equalsAny(normalized, "唐诗", "古诗", "背诗"):
 		return byID("poem")
@@ -179,7 +205,10 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "数数", "数一数", "一起数", "数数字") ||
 		equalsAny(normalized, "数字", "一二三", "123"):
 		return byID("counting")
-	case containsAny(normalized, "唱歌", "唱个歌", "唱一个", "唱一首", "唱首歌", "声音游戏", "学声音") ||
+	case containsAny(normalized, "唱童谣", "唱儿歌", "给我唱", "你唱个", "唱个歌", "唱一个", "唱一首", "唱首歌", "陪我唱", "一起唱") ||
+		equalsAny(normalized, "唱", "唱歌", "童谣", "儿歌"):
+		return byID("nursery_rhyme")
+	case containsAny(normalized, "声音游戏", "学声音", "学小动物叫") ||
 		equalsAny(normalized, "音乐", "声音"):
 		return byID("sound_game")
 	case containsAny(normalized, "去旅行", "坐火车", "去森林", "去海边", "去探险", "想象旅行", "旅行游戏") ||
@@ -194,7 +223,7 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "玩颜色", "找颜色", "找红色", "找蓝色", "找黄色", "找绿色") ||
 		equalsAny(normalized, "颜色", "红色", "蓝色", "黄色", "绿色"):
 		return byID("color_hunt")
-	case containsAny(normalized, "害怕", "我怕", "好怕", "想妈妈", "想爸爸", "哭了", "我哭", "抱抱"):
+	case isComfortIntent(normalized):
 		return byID("comfort")
 	case LooksLikeToddlerBabble(normalized):
 		return babbleActivity(), true
@@ -209,8 +238,12 @@ func PlanActivity(text string) (Activity, bool) {
 // PlanActivityWithHistory resolves short follow-ups that only make sense after a previous turn.
 func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	normalized := stripDogAddress(normalizeToddlerIntentText(text))
-	if containsAny(normalized, "听不懂", "听不清", "听不见", "不清楚", "有点卡", "太卡", "卡住") {
+	if containsAny(normalized, "听不懂", "听不清", "听不见", "没听见", "不清楚", "有点卡", "太卡", "卡住") {
 		return Activity{}, false
+	}
+	if containsAny(normalized, "再唱一个", "再唱一首", "换个童谣", "换首童谣", "继续唱") ||
+		(equalsAny(normalized, "再来一个", "换一个") && hasRecentActivity(history, "nursery_rhyme")) {
+		return byID("nursery_rhyme")
 	}
 	if isStoryAffirmation(normalized) && (hasPendingStoryOffer(history) || hasRecentActivity(history, "story")) {
 		return activityWithHistory("story", history)
@@ -219,6 +252,9 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 		return activity, true
 	}
 	if activity, ok := PlanActivity(text); ok {
+		if activity.ID == "presence" && hasRecentActivity(history, "presence") {
+			return activityWithHistory("guide", history)
+		}
 		if activity.ID == "story" {
 			activity.Reply = randomReplyExcluding("story", history, activity.Reply)
 		}
@@ -254,8 +290,37 @@ func continueRecentActivity(text string, history []Turn) (Activity, bool) {
 		if matchesShortChoice(text, "找到了", "找到啦", "在这里", "有一个") {
 			return fixedActivity("color_hunt", activityContinuationReplies["color_hunt"][0])
 		}
+	case "nursery_rhyme":
+		return continueNurseryRhyme(text)
 	}
 	return Activity{}, false
+}
+
+func continueNurseryRhyme(text string) (Activity, bool) {
+	replies := activityContinuationReplies["nursery_rhyme"]
+	switch {
+	case matchesShortChoice(text, "滴答"):
+		return fixedActivity("nursery_rhyme", replies[0])
+	case matchesShortChoice(text, "摇呀摇", "摇摇"):
+		return fixedActivity("nursery_rhyme", replies[1])
+	case matchesShortChoice(text, "啦啦"):
+		return fixedActivity("nursery_rhyme", replies[2])
+	case matchesShortChoice(text, "汪汪", "旺旺"):
+		return fixedActivity("nursery_rhyme", replies[3])
+	case matchesShortChoice(text, "咚咚"):
+		return fixedActivity("nursery_rhyme", replies[4])
+	case matchesShortChoice(text, "喵喵"):
+		return fixedActivity("nursery_rhyme", replies[5])
+	default:
+		return Activity{}, false
+	}
+}
+
+func isComfortIntent(text string) bool {
+	if containsAny(text, "不害怕", "不怕", "没害怕", "不用抱抱") {
+		return false
+	}
+	return containsAny(text, "害怕", "我怕", "好怕", "想妈妈", "想爸爸", "哭了", "我哭", "抱抱")
 }
 
 func continueAdventure(text string) (Activity, bool) {
@@ -575,6 +640,11 @@ func PrewarmReplies() []string {
 			appendReply(reply)
 		}
 	}
+	for _, id := range []string{"guide", "nursery_rhyme"} {
+		for _, reply := range activityReplyVariants[id] {
+			appendReply(reply)
+		}
+	}
 	for _, id := range []string{
 		"story",
 		"adventure",
@@ -585,7 +655,7 @@ func PrewarmReplies() []string {
 			appendReply(reply)
 		}
 	}
-	for _, id := range []string{"adventure", "pretend_play", "magic", "animal_guess", "color_hunt"} {
+	for _, id := range []string{"nursery_rhyme", "adventure", "pretend_play", "magic", "animal_guess", "color_hunt"} {
 		for _, reply := range activityContinuationReplies[id] {
 			appendReply(reply)
 		}
@@ -607,6 +677,14 @@ func PrewarmReplies() []string {
 }
 
 var activityContinuationReplies = map[string][]string{
+	"nursery_rhyme": {
+		"滴答滴答唱得好，小花喝水长高高。豆豆接着唱，啦啦啦。",
+		"摇呀摇，摇呀摇，月亮小船不着急。豆豆陪你轻轻唱。",
+		"啦啦啦，云朵笑，风儿带着歌声跑。豆豆和你唱完啦。",
+		"汪汪汪，豆豆来，小小歌声装口袋。我们一起唱得真好。",
+		"咚咚咚，小鼓响，豆豆接着唱一唱。咚咚，停。",
+		"喵喵喵，小猫唱，豆豆用汪汪来合唱。喵喵，汪汪。",
+	},
 	"adventure": {
 		"海边到啦，浪花哗啦哗啦。我们捡贝壳，还是堆沙堡？",
 		"花花森林到啦，小鸟在唱歌。我们去找小兔，还是找小鹿？",
@@ -670,6 +748,24 @@ var activityContinuationReplies = map[string][]string{
 }
 
 var activityReplyVariants = map[string][]string{
+	"guide": {
+		"豆豆会讲故事、猜动物，还会陪你过家家。你想先玩哪个？",
+		"我们可以去想象旅行、变魔法，或者唱一首小童谣。你选一个吧。",
+		"豆豆会数数、找颜色，还会学小动物叫。你想玩哪一个？",
+		"想安静一点，可以听故事。想一起玩，可以猜动物或过家家。",
+		"豆豆今天准备了故事、魔法和小火车旅行。你说一个，马上开始。",
+		"你可以说讲故事、唱童谣，也可以直接和豆豆聊天。",
+	},
+	"nursery_rhyme": {
+		"小雨点，滴滴答，跳到窗边看小花。你来唱，滴答滴答。",
+		"月亮船，弯又弯，载着云朵过蓝天。你来唱，摇呀摇。",
+		"小白云，慢慢飘，碰见太阳问声好。你来唱，啦啦啦。",
+		"小狗豆豆起得早，听见小鸟喳喳叫。你来唱，汪汪汪。",
+		"小鼓圆，咚咚响，一声轻来一声亮。你来唱，咚咚咚。",
+		"小猫走路静悄悄，胡子弯弯尾巴翘。你来唱，喵喵喵。",
+		"胡萝卜，穿红袄，小兔看见眯眯笑。咔嚓一口，味道好。",
+		"晚风轻，星星亮，豆豆陪你唱一唱。歌声小小，心里暖。",
+	},
 	"story": {
 		"从前有一只小狗豆豆，找到一颗会发光的小星星。它把星星送回天空，夜晚就亮起来啦。",
 		"小松鼠捡到一颗圆橡果，却搬不动。豆豆用鼻子轻轻一推，橡果滚回了小松鼠的家。",
@@ -783,7 +879,7 @@ var activityReplyVariants = map[string][]string{
 		"豆豆正在安安静静地陪你聊天。",
 	},
 	"greeting": {
-		"你好呀，豆豆在听你说话。",
+		"你好呀，豆豆会讲故事、猜动物。你想先玩哪个？",
 		"你好你好，豆豆也来问好。",
 		"嗨，豆豆听见你啦。",
 		"你好呀，今天也见到你啦。",
