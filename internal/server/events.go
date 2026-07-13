@@ -227,7 +227,7 @@ func summarizeEvents(events []ConversationEvent) EventSummary {
 		}
 		appendPositive(&ttsFirstAudio, event.Timings.TTSFirstAudioMS)
 		if event.Timings.PlaybackMS > 0 {
-			wait := event.Timings.TurnTotalMS - event.Timings.PlaybackMS - event.Timings.AudioDurationMS
+			wait := event.Timings.TurnTotalMS - event.Timings.PlaybackMS
 			appendPositive(&waitFirstAudio, wait)
 		}
 	}

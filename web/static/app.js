@@ -223,7 +223,7 @@ function renderEvent(event) {
 }
 
 function waitForFirstAudio(timings) {
-  return Math.max(0, (timings.turn_total_ms || 0) - (timings.playback_ms || 0) - (timings.audio_duration_ms || 0));
+  return Math.max(0, (timings.turn_total_ms || 0) - (timings.playback_ms || 0));
 }
 
 function eventFeedbackControls(event) {

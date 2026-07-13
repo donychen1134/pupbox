@@ -549,7 +549,7 @@ func TestSummarizeEventsCalculatesCacheAndLatencyPercentiles(t *testing.T) {
 	if summary.TTSCacheHitRate < 0.66 || summary.TTSCacheHitRate > 0.67 {
 		t.Fatalf("cache hit rate = %f", summary.TTSCacheHitRate)
 	}
-	if summary.STT.P50MS != 200 || summary.STT.P90MS != 300 || summary.Reply.Samples != 2 || summary.WaitFirstAudio.P50MS != 1000 || summary.WaitFirstAudio.P90MS != 1500 {
+	if summary.STT.P50MS != 200 || summary.STT.P90MS != 300 || summary.Reply.Samples != 2 || summary.WaitFirstAudio.P50MS != 2000 || summary.WaitFirstAudio.P90MS != 3000 {
 		t.Fatalf("summary percentiles = %+v", summary)
 	}
 }

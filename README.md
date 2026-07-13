@@ -147,7 +147,7 @@ See [docs/software-roadmap.md](docs/software-roadmap.md) for the remaining phone
 
 See [docs/project-review.md](docs/project-review.md) for the current infrastructure, model, networking, privacy, and final-device risk review.
 
-The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
+The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. After at least three established scene turns, a reviewed surprise card may advance animal, travel, food, bubble, or magic play. Surprise cards have a three-turn cooldown, stay within the recent scene, and end with a sound or two-option prompt that a toddler can answer with one word. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 
 ## OpenAI Settings
 

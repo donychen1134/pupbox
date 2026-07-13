@@ -187,7 +187,7 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "背唐诗", "背古诗", "念唐诗", "念古诗", "读唐诗", "读古诗", "来首唐诗", "来一首唐诗") ||
 		equalsAny(normalized, "唐诗", "古诗", "背诗"):
 		return byID("poem")
-	case containsAny(normalized, "讲故事", "讲个故事", "听故事", "说故事", "小狗故事", "新故事", "再讲一个故事", "讲个古事", "讲个古是", "讲个鼓事", "讲个故是") ||
+	case containsAny(normalized, "讲故事", "讲个故事", "讲一个故事", "听故事", "说故事", "小狗故事", "新故事", "再讲一个故事", "讲个古事", "讲个古是", "讲个鼓事", "讲个故是") ||
 		equalsAny(normalized, "故事", "古事", "古是", "鼓事", "故是"):
 		return byID("story")
 	case (utf8.RuneCountInString(normalized) <= 12 && containsAny(normalized, "你在干什么", "你在干啥", "你干什么呢", "你干啥呢", "你干嘛呢")) ||
@@ -215,7 +215,7 @@ func PlanActivity(text string) (Activity, bool) {
 		equalsAny(normalized, "旅行", "探险", "出发"):
 		return byID("adventure")
 	case containsAny(normalized, "过家家", "开商店", "开餐厅", "做饭游戏", "喂娃娃", "玩娃娃", "茶话会") ||
-		equalsAny(normalized, "做饭", "商店", "餐厅", "娃娃"):
+		equalsAny(normalized, "做饭", "商店", "餐厅"):
 		return byID("pretend_play")
 	case containsAny(normalized, "变魔法", "魔法游戏", "玩魔法", "变变变", "变一个") ||
 		equalsAny(normalized, "魔法", "变身"):
@@ -252,6 +252,9 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 		return activity, true
 	}
 	if activity, ok := PlanActivity(text); ok {
+		if activity.ID == "clap" && hasRecentCountingRejection(history) {
+			return fixedActivity("clap", "汪汪，豆豆记得不数数啦。你想学小猫，还是学小狗叫？")
+		}
 		if activity.ID == "presence" && hasRecentActivity(history, "presence") {
 			return activityWithHistory("guide", history)
 		}
@@ -270,6 +273,16 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 		}
 	}
 	return Activity{}, false
+}
+
+func hasRecentCountingRejection(history []Turn) bool {
+	for i := len(history) - 1; i >= 0 && i >= len(history)-5; i-- {
+		text := normalizeToddlerIntentText(history[i].User)
+		if containsAny(text, "别数", "不要数", "不数了", "别说一二三", "不要一二三") {
+			return true
+		}
+	}
+	return false
 }
 
 func continueRecentActivity(text string, history []Turn) (Activity, bool) {
@@ -670,6 +683,11 @@ func PrewarmReplies() []string {
 		"comfort",
 	} {
 		for _, reply := range activityReplyVariants[id] {
+			appendReply(reply)
+		}
+	}
+	for _, scene := range surpriseScenes {
+		for _, reply := range scene.cards {
 			appendReply(reply)
 		}
 	}

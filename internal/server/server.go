@@ -773,6 +773,10 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
 		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 	}
+	if activity, ok := dog.PlanSceneSurprise(text, history); ok {
+		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
+		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
+	}
 
 	if s.useChat {
 		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), contextualInput(history, text))

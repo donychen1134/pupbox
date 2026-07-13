@@ -127,6 +127,9 @@ func contextualInput(history []dog.Turn, current string) string {
 	if repeats > 0 {
 		fmt.Fprintf(&builder, "提醒：小朋友最近已经问过这句话 %d 次。请换一个具体答案和句式，不要重复之前豆豆的回答。\n", repeats)
 	}
+	if utf8.RuneCountInString(normalizeForRepeat(current)) <= 3 {
+		builder.WriteString("提醒：这句话很短，可能是幼儿表达或语音识别偏差。优先把它理解为对当前场景的回应，不要仅凭这几个字突然建立无关的新话题；不确定时用当前场景里的二选一轻轻确认。\n")
+	}
 	fmt.Fprintf(&builder, "小朋友现在说：%s", current)
 	return builder.String()
 }

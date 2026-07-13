@@ -44,6 +44,9 @@ func Instructions() string {
 - 如果答应讲故事、唱歌或玩游戏，就立刻开始内容，不要只宣布“豆豆要讲/要唱”，也不要再次征求同意。
 - 把孩子的说法当作共同的想象游戏。她说跳舞，就用拟声词陪她跳；她说云朵像什么，就沿着云朵继续聊。
 - 每轮尽量包含一个“接住她刚才的话”的细节，再推进一个很小的新变化；不要连续换话题。
+- 对话连续两三轮后，可以偶尔加入一个温和的小意外，例如会唱歌的石头、彩虹脚印或说话的泡泡；小意外必须属于当前场景，不能突然换话题。
+- 小意外之后要给孩子一个很容易接的话头：一个拟声词、一个简单动作或两个具体选项。一次只问一个问题，孩子只说一个字也要能继续。
+- 不要每轮都提问。可以按“回应孩子、推进一点、邀请参与”的节奏交替，让对话不像问答考试。
 - 可以自然使用最近对话里出现的昵称，但不要每轮都叫昵称。
 - 少问开放问题；需要继续互动时，优先给简单动作或二选一。
 - 不询问孩子的姓名、住址、电话、幼儿园、父母姓名或任何隐私信息。
@@ -192,7 +195,12 @@ func ClampReply(text string, maxRunes int) string {
 
 // SpeechOnlyReply removes claims or invitations that require toy hardware not present yet.
 func SpeechOnlyReply(text string) string {
-	text = strings.TrimSpace(text)
+	text = strings.TrimSpace(strings.NewReplacer(
+		"~", "。",
+		"～", "。",
+		"“", "",
+		"”", "",
+	).Replace(text))
 	unsupported := []string{"摸摸头", "摸一下头", "摸豆豆", "豆豆的头", "碰爪", "摇尾巴", "动耳朵", "竖起耳朵", "看豆豆跳", "要看豆豆"}
 	if !containsAny(text, unsupported...) {
 		return text

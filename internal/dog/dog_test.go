@@ -203,6 +203,23 @@ func TestStoryActivityWithHistoryAvoidsRecentReplies(t *testing.T) {
 	}
 }
 
+func TestNaturalStoryRequestRoutesToStory(t *testing.T) {
+	activity, ok := PlanActivity("你给我讲一个故事吧")
+	if !ok || activity.ID != "story" {
+		t.Fatalf("activity = %#v ok=%v, want story", activity, ok)
+	}
+}
+
+func TestBareDollDoesNotOverrideConversation(t *testing.T) {
+	if activity, ok := PlanActivity("娃娃"); ok {
+		t.Fatalf("activity = %#v, want model routing", activity)
+	}
+	activity, ok := PlanActivity("我们玩娃娃吧")
+	if !ok || activity.ID != "pretend_play" {
+		t.Fatalf("activity = %#v ok=%v, want pretend_play", activity, ok)
+	}
+}
+
 func TestStoryFollowUpUsesRecentHistory(t *testing.T) {
 	history := []Turn{{User: "你给我讲个故事吧", Reply: "从前有一只小狗。", ActivityID: "story"}}
 	activity, ok := PlanActivityWithHistory("再讲一个", history)
@@ -392,6 +409,9 @@ func TestSingACompleteSongRoutesToNurseryRhyme(t *testing.T) {
 
 func TestPrewarmRepliesAreUniqueAndCoverReviewedActivities(t *testing.T) {
 	replies := PrewarmReplies()
+	if len(replies) > 192 {
+		t.Fatalf("prewarm replies = %d, exceed default startup limit 192", len(replies))
+	}
 	if len(replies) < 50 {
 		t.Fatalf("prewarm replies = %d, want at least 50", len(replies))
 	}
@@ -406,6 +426,13 @@ func TestPrewarmRepliesAreUniqueAndCoverReviewedActivities(t *testing.T) {
 		for _, reply := range activityReplyVariants[id] {
 			if !seen[reply] {
 				t.Fatalf("prewarm replies do not include %s reply %q", id, reply)
+			}
+		}
+	}
+	for _, scene := range surpriseScenes {
+		for _, reply := range scene.cards {
+			if !seen[reply] {
+				t.Fatalf("prewarm replies do not include %s surprise %q", scene.id, reply)
 			}
 		}
 	}
@@ -438,6 +465,55 @@ func TestBabbleActivitiesAllHaveReplies(t *testing.T) {
 	}
 }
 
+func TestBabbleRemembersRecentCountingRejection(t *testing.T) {
+	history := []Turn{{User: "你别数一二三了吧", Reply: "好，不数啦。"}}
+	activity, ok := PlanActivityWithHistory("汪汪", history)
+	if !ok || activity.ID != "clap" || strings.Contains(activity.Reply, "一二三") || !strings.Contains(activity.Reply, "不数数") {
+		t.Fatalf("activity = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestSceneSurpriseNeedsEstablishedSceneAndInvitesEasyReply(t *testing.T) {
+	history := []Turn{
+		{User: "我们骑小毛驴", Reply: "小毛驴出发啦。"},
+		{User: "快一点", Reply: "哒哒哒，跑上小山坡。"},
+		{User: "看见花了", Reply: "山坡上有好多小花。"},
+	}
+	activity, ok := PlanSceneSurprise("还有", history)
+	if !ok || (activity.ID != "surprise_animal" && activity.ID != "surprise_travel") {
+		t.Fatalf("activity = %#v ok=%v, want scene-matched surprise", activity, ok)
+	}
+	if !strings.Contains(activity.Reply, "还是") {
+		t.Fatalf("surprise does not provide an easy choice: %q", activity.Reply)
+	}
+}
+
+func TestSceneSurpriseDoesNotInterruptQuestionOrCooldown(t *testing.T) {
+	history := []Turn{
+		{User: "我们吃冰激凌", Reply: "草莓冰激凌甜甜的。"},
+		{User: "我还要", Reply: "再加一个小球。"},
+		{User: "好呀", Reply: "冰激凌做好啦。"},
+	}
+	if activity, ok := PlanSceneSurprise("你喜欢什么味道？", history); ok {
+		t.Fatalf("question was interrupted by %#v", activity)
+	}
+	history = append(history, Turn{User: "还有", Reply: "一颗饼干唱起歌。", ActivityID: "surprise_food"})
+	if activity, ok := PlanSceneSurprise("草莓", history); ok {
+		t.Fatalf("surprise cooldown ignored: %#v", activity)
+	}
+}
+
+func TestSceneSurpriseStaysOffUnrelatedShortConversation(t *testing.T) {
+	history := []Turn{
+		{User: "你好", Reply: "你好呀。"},
+		{User: "你是谁", Reply: "我是豆豆。"},
+		{User: "好吧", Reply: "豆豆陪你。"},
+	}
+	if activity, ok := PlanSceneSurprise("嗯", history); ok {
+		t.Fatalf("unrelated chat got surprise: %#v", activity)
+	}
+}
+
 func TestClampReply(t *testing.T) {
 	got := ClampReply("一二三四五", 3)
 	if got != "一二三。" {
@@ -452,6 +528,13 @@ func TestSpeechOnlyReplyRemovesUnsupportedToyInteraction(t *testing.T) {
 	}
 	if got := SpeechOnlyReply("豆豆摇尾巴。来碰爪子吧。"); got != "豆豆在听你说话呢。" {
 		t.Fatalf("unexpected all-removed fallback %q", got)
+	}
+}
+
+func TestSpeechOnlyReplyRemovesVisualPunctuation(t *testing.T) {
+	got := SpeechOnlyReply("豆豆也“啊呸”一下~")
+	if got != "豆豆也啊呸一下。" {
+		t.Fatalf("unexpected spoken reply %q", got)
 	}
 }
 

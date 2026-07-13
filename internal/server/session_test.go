@@ -25,3 +25,11 @@ func TestContextualInputIncludesActivityState(t *testing.T) {
 		t.Fatalf("activity state missing from input: %q", input)
 	}
 }
+
+func TestContextualInputKeepsVeryShortSpeechInCurrentScene(t *testing.T) {
+	history := []dog.Turn{{User: "我们骑小毛驴", Reply: "小毛驴跑上山坡啦。"}}
+	input := contextualInput(history, "这棋")
+	if !strings.Contains(input, "语音识别偏差") || !strings.Contains(input, "不要仅凭这几个字突然建立无关的新话题") {
+		t.Fatalf("short speech guidance missing from input: %q", input)
+	}
+}
