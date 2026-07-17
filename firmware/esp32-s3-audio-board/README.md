@@ -30,7 +30,20 @@ idf.py build
 
 For the temporary bench Wi-Fi test, copy `main/secrets.example.h` to
 `main/secrets.h` and fill in a 2.4 GHz SSID and password. The local secrets
-file is ignored by Git. ESP32-S3 does not support 5 GHz Wi-Fi.
+file is ignored by Git. Add `PUPBOX_ACCESS_TOKEN` from the VPS environment to
+receive HTTP 200 from the protected backend health endpoint. Without it, HTTP
+401 still verifies DNS, Internet access, CA-validated TLS, and HTTP transport.
+ESP32-S3 does not support 5 GHz Wi-Fi.
+
+After Wi-Fi connects, a background task synchronizes the clock with SNTP and
+checks `https://pupbox.983457.xyz/api/health`. Serial logs report DNS, secure
+connection, first-byte, and total timings without logging credentials or the
+response body. Button recording and playback remain available during this
+diagnostic task.
+
+The 16 MB flash uses two 4 MB OTA application slots plus a data partition.
+This leaves room for the HTTPS and voice client while reserving a rollback
+slot for future over-the-air firmware updates.
 
 `idf.py build` only creates files on the Mac and never changes the board.
 

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "audio_board.h"
+#include "backend_health.h"
 #include "board_config.h"
 #include "secrets.h"
 #include "wifi_station.h"
@@ -17,6 +18,20 @@ constexpr char kTag[] = "pupbox_loopback";
 constexpr size_t kMaxRecordingSeconds = 8;
 constexpr size_t kMaxSamples = kAudioSampleRate * kMaxRecordingSeconds;
 constexpr size_t kChunkSamples = 240;
+
+#ifndef PUPBOX_ACCESS_TOKEN
+#define PUPBOX_ACCESS_TOKEN ""
+#endif
+
+void BackendHealthTask(void*) {
+    const esp_err_t time_result = SyncClock();
+    if (time_result != ESP_OK) {
+        ESP_LOGW(kTag, "clock sync failed; attempting HTTPS diagnostics anyway");
+    }
+    CheckBackendHealth(kBackendHost, kBackendHealthURL,
+                       PUPBOX_ACCESS_TOKEN);
+    vTaskDelete(nullptr);
+}
 
 bool ButtonPressed(AudioBoard& audio, uint32_t button_pin) {
     bool pressed = false;
@@ -47,6 +62,12 @@ extern "C" void app_main() {
     if (recording == nullptr) {
         ESP_LOGE(kTag, "failed to allocate recording buffer");
         return;
+    }
+
+    if (wifi_result == ESP_OK &&
+        xTaskCreate(BackendHealthTask, "backend_health", 8192, nullptr, 4,
+                    nullptr) != pdPASS) {
+        ESP_LOGW(kTag, "failed to start backend health task");
     }
 
     int output_volume = kInitialOutputVolume;
