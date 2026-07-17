@@ -4,6 +4,8 @@
 
 #include "audio_board.h"
 #include "board_config.h"
+#include "secrets.h"
+#include "wifi_station.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -30,6 +32,12 @@ void WaitForButtonRelease(AudioBoard& audio, uint32_t button_pin) {
 }
 
 extern "C" void app_main() {
+    const esp_err_t wifi_result =
+        ConnectWifi(PUPBOX_WIFI_SSID, PUPBOX_WIFI_PASSWORD);
+    if (wifi_result != ESP_OK) {
+        ESP_LOGW(kTag, "Wi-Fi is not ready; local audio remains available");
+    }
+
     AudioBoard audio;
     ESP_ERROR_CHECK(audio.Init());
 

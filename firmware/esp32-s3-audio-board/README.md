@@ -28,6 +28,10 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
+For the temporary bench Wi-Fi test, copy `main/secrets.example.h` to
+`main/secrets.h` and fill in a 2.4 GHz SSID and password. The local secrets
+file is ignored by Git. ESP32-S3 does not support 5 GHz Wi-Fi.
+
 `idf.py build` only creates files on the Mac and never changes the board.
 
 When someone can stay beside the connected board, flash and then monitor it:
