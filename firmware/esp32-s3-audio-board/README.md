@@ -23,9 +23,10 @@ The microphone remains at 24 kHz for the board codec. Before upload, firmware
 resamples speech to 16 kHz mono PCM to reduce request size by one third. TTS
 PCM remains at 24 kHz for playback quality. The reply client buffers slow
 first-time TTS completely so playback stays continuous, while cached or
-faster-than-realtime audio can begin after a shorter prebuffer. If Wi-Fi or
-the voice request fails, the board plays the local recording as a diagnostic
-fallback.
+faster-than-realtime audio can begin after a shorter prebuffer. Wi-Fi state is
+checked before every turn so a hotspot that appears after startup can recover
+without a reset. If Wi-Fi or the voice request fails, the board plays a short
+low error cue instead of repeating the child's recording.
 
 Automatic recording keeps roughly 300 ms before detected speech to avoid
 clipping the first syllable and retains about 200 ms of trailing silence. Very

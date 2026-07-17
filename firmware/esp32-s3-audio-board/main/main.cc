@@ -64,18 +64,25 @@ void WaitForButtonRelease(AudioBoard& audio, uint32_t button_pin) {
     }
 }
 
-esp_err_t PlayLocalRecording(AudioBoard& audio, const int16_t* recording,
-                             size_t recorded_samples, int output_volume) {
+esp_err_t PlayErrorCue(AudioBoard& audio, int output_volume) {
+    constexpr size_t kCueFrames = 10;
+    constexpr int32_t kCueAmplitude = 1800;
+    int16_t samples[kChunkSamples];
+
     ESP_RETURN_ON_ERROR(audio.SetOutputEnabled(true), kTag,
-                        "enable local playback");
+                        "enable error cue");
     ESP_RETURN_ON_ERROR(audio.SetOutputVolume(output_volume), kTag,
-                        "set local playback volume");
-    for (size_t offset = 0; offset < recorded_samples;) {
-        const size_t count =
-            std::min(kChunkSamples, recorded_samples - offset);
-        ESP_RETURN_ON_ERROR(audio.Write(recording + offset, count), kTag,
-                            "write local playback");
-        offset += count;
+                        "set error cue volume");
+    for (size_t frame = 0; frame < kCueFrames; ++frame) {
+        const int32_t period = frame < kCueFrames / 2 ? 64 : 96;
+        for (size_t index = 0; index < kChunkSamples; ++index) {
+            const int32_t phase = static_cast<int32_t>(
+                (frame * kChunkSamples + index) % period);
+            samples[index] = phase < period / 2 ? kCueAmplitude
+                                                : -kCueAmplitude;
+        }
+        ESP_RETURN_ON_ERROR(audio.Write(samples, kChunkSamples), kTag,
+                            "write error cue");
     }
     return audio.SetOutputEnabled(false);
 }
@@ -264,17 +271,16 @@ bool EndsConversation(const VoiceReply& reply) {
 }
 
 bool RunVoiceTurn(AudioBoard& audio, const int16_t* recording,
-                  size_t recorded_samples, bool online, int output_volume,
+                  size_t recorded_samples, int output_volume,
                   VoiceReply* reply) {
     if (recorded_samples < kAudioSampleRate / 5 || reply == nullptr) {
         ESP_LOGW(kTag, "recording too short: %u samples",
                  static_cast<unsigned>(recorded_samples));
         return false;
     }
-    if (!online) {
-        ESP_LOGW(kTag, "offline; playing local recording");
-        ESP_ERROR_CHECK(PlayLocalRecording(
-            audio, recording, recorded_samples, output_volume));
+    if (!WifiConnected()) {
+        ESP_LOGW(kTag, "offline; skipping voice request");
+        ESP_ERROR_CHECK(PlayErrorCue(audio, output_volume));
         return false;
     }
 
@@ -289,9 +295,7 @@ bool RunVoiceTurn(AudioBoard& audio, const int16_t* recording,
     if (upload_result != ESP_OK) {
         ESP_LOGE(kTag, "voice request failed: %s",
                  esp_err_to_name(upload_result));
-        ESP_LOGW(kTag, "playing local diagnostic fallback");
-        ESP_ERROR_CHECK(PlayLocalRecording(
-            audio, recording, recorded_samples, output_volume));
+        ESP_ERROR_CHECK(PlayErrorCue(audio, output_volume));
         return false;
     }
 
@@ -387,7 +391,7 @@ extern "C" void app_main() {
 
         VoiceReply reply = {};
         if (!RunVoiceTurn(audio, recording, recorded_samples,
-                          wifi_result == ESP_OK, output_volume, &reply)) {
+                          output_volume, &reply)) {
             continue;
         }
         if (!conversation_mode) {
@@ -417,7 +421,7 @@ extern "C" void app_main() {
                 break;
             }
             reply = {};
-            if (!RunVoiceTurn(audio, recording, recorded_samples, true,
+            if (!RunVoiceTurn(audio, recording, recorded_samples,
                               output_volume, &reply)) {
                 ESP_LOGW(kTag, "conversation ended after a failed turn");
                 break;

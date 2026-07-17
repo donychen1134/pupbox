@@ -96,3 +96,8 @@ esp_err_t ConnectWifi(const char* ssid, const char* password) {
     }
     return ESP_OK;
 }
+
+bool WifiConnected() {
+    return connection_events != nullptr &&
+           (xEventGroupGetBits(connection_events) & kConnectedBit) != 0;
+}
