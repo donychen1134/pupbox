@@ -22,13 +22,21 @@ constexpr size_t kMaxRecordingSeconds = 8;
 constexpr size_t kMaxSamples = kAudioSampleRate * kMaxRecordingSeconds;
 constexpr size_t kChunkSamples = 240;
 constexpr size_t kTapThresholdSamples = kAudioSampleRate * 450 / 1000;
-constexpr size_t kAutoWaitSamples = kAudioSampleRate * 8;
+constexpr size_t kInitialWaitSeconds = 8;
+constexpr size_t kFollowupWaitSeconds = 20;
+constexpr size_t kMaxConversationTurns = 8;
 constexpr size_t kVADPreRollSamples = kAudioSampleRate * 300 / 1000;
 constexpr size_t kVADStartFrames = 5;
 constexpr size_t kVADEndSilenceFrames = 110;
 constexpr size_t kVADTrailingSilenceFrames = 20;
 constexpr size_t kVADMinimumActiveFrames = 20;
 constexpr int32_t kVADMinimumLevel = 180;
+
+enum class AutoCaptureResult {
+    kSpeech,
+    kTimeout,
+    kCanceled,
+};
 
 #ifndef PUPBOX_ACCESS_TOKEN
 #define PUPBOX_ACCESS_TOKEN ""
@@ -110,12 +118,19 @@ esp_err_t PlayListeningCue(AudioBoard& audio, int output_volume) {
 }
 
 esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
-                                    size_t* recorded_samples) {
-    if (recording == nullptr || recorded_samples == nullptr) {
+                                    size_t wait_seconds,
+                                    size_t* recorded_samples,
+                                    AutoCaptureResult* capture_result) {
+    if (recording == nullptr || recorded_samples == nullptr ||
+        capture_result == nullptr || wait_seconds == 0) {
         return ESP_ERR_INVALID_ARG;
     }
     *recorded_samples = 0;
+    *capture_result = AutoCaptureResult::kTimeout;
+    const size_t wait_limit_samples = kAudioSampleRate * wait_seconds;
     size_t listened_samples = 0;
+    size_t pre_roll_samples = 0;
+    size_t pre_roll_write = 0;
     size_t consecutive_active_frames = 0;
     size_t active_frames = 0;
     size_t quiet_frames = 0;
@@ -125,19 +140,33 @@ esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
 
     ESP_RETURN_ON_ERROR(audio.SetInputEnabled(true), kTag,
                         "enable automatic recording");
-    while (*recorded_samples + kChunkSamples <= kMaxSamples) {
-        int16_t* frame = recording + *recorded_samples;
+    int16_t frame[kChunkSamples];
+    while (true) {
+        if (ButtonPressed(audio, kRecordButtonPin)) {
+            ESP_RETURN_ON_ERROR(audio.SetInputEnabled(false), kTag,
+                                "disable canceled automatic recording");
+            WaitForButtonRelease(audio, kRecordButtonPin);
+            *recorded_samples = 0;
+            *capture_result = AutoCaptureResult::kCanceled;
+            ESP_LOGI(kTag, "automatic listening canceled by K2");
+            return ESP_OK;
+        }
         const esp_err_t read_result = audio.Read(frame, kChunkSamples);
         if (read_result != ESP_OK) {
             audio.SetInputEnabled(false);
             return read_result;
         }
-        *recorded_samples += kChunkSamples;
         listened_samples += kChunkSamples;
 
         const int32_t frame_level = MeanAbsoluteLevel(frame, kChunkSamples);
         const bool active = frame_level >= speech_threshold;
         if (!speech_started) {
+            for (size_t index = 0; index < kChunkSamples; ++index) {
+                recording[pre_roll_write] = frame[index];
+                pre_roll_write = (pre_roll_write + 1) % kVADPreRollSamples;
+                pre_roll_samples =
+                    std::min(kVADPreRollSamples, pre_roll_samples + 1);
+            }
             if (active) {
                 ++consecutive_active_frames;
             } else {
@@ -147,16 +176,12 @@ esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
                     std::max(kVADMinimumLevel, noise_level * 3 + 80);
             }
             if (consecutive_active_frames >= kVADStartFrames) {
-                const size_t keep_from =
-                    *recorded_samples > kVADPreRollSamples
-                        ? *recorded_samples - kVADPreRollSamples
-                        : 0;
-                if (keep_from > 0) {
-                    std::memmove(recording, recording + keep_from,
-                                 (*recorded_samples - keep_from) *
-                                     sizeof(int16_t));
-                    *recorded_samples -= keep_from;
+                if (pre_roll_samples == kVADPreRollSamples &&
+                    pre_roll_write != 0) {
+                    std::rotate(recording, recording + pre_roll_write,
+                                recording + kVADPreRollSamples);
                 }
+                *recorded_samples = pre_roll_samples;
                 speech_started = true;
                 active_frames = consecutive_active_frames;
                 quiet_frames = 0;
@@ -164,15 +189,25 @@ esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
                          "automatic speech started: noise=%ld threshold=%ld",
                          static_cast<long>(noise_level),
                          static_cast<long>(speech_threshold));
-            } else if (listened_samples >= kAutoWaitSamples) {
+            } else if (listened_samples >= wait_limit_samples) {
                 *recorded_samples = 0;
                 ESP_RETURN_ON_ERROR(audio.SetInputEnabled(false), kTag,
                                     "disable timed-out recording");
-                ESP_LOGI(kTag, "automatic listening timed out without speech");
+                *capture_result = AutoCaptureResult::kTimeout;
+                ESP_LOGI(kTag,
+                         "automatic listening timed out after %u seconds",
+                         static_cast<unsigned>(wait_seconds));
                 return ESP_OK;
             }
             continue;
         }
+
+        if (*recorded_samples + kChunkSamples > kMaxSamples) {
+            break;
+        }
+        std::memcpy(recording + *recorded_samples, frame,
+                    sizeof(frame));
+        *recorded_samples += kChunkSamples;
 
         if (active) {
             ++active_frames;
@@ -188,6 +223,8 @@ esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
                      static_cast<unsigned>(active_frames));
             *recorded_samples = 0;
             speech_started = false;
+            pre_roll_samples = 0;
+            pre_roll_write = 0;
             consecutive_active_frames = 0;
             active_frames = 0;
             quiet_frames = 0;
@@ -201,6 +238,7 @@ esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
             std::min(*recorded_samples, removable_samples);
         ESP_RETURN_ON_ERROR(audio.SetInputEnabled(false), kTag,
                             "disable completed automatic recording");
+        *capture_result = AutoCaptureResult::kSpeech;
         ESP_LOGI(kTag,
                  "automatic speech ended: active=%u frames audio=%.2f seconds",
                  static_cast<unsigned>(active_frames),
@@ -212,10 +250,59 @@ esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
                         "disable full automatic recording");
     if (!speech_started || active_frames < kVADMinimumActiveFrames) {
         *recorded_samples = 0;
+        *capture_result = AutoCaptureResult::kTimeout;
+    } else {
+        *capture_result = AutoCaptureResult::kSpeech;
     }
     ESP_LOGI(kTag, "automatic recording reached the %.0f second limit",
              static_cast<double>(kMaxRecordingSeconds));
     return ESP_OK;
+}
+
+bool EndsConversation(const VoiceReply& reply) {
+    return std::strcmp(reply.source, "activity:farewell") == 0;
+}
+
+bool RunVoiceTurn(AudioBoard& audio, const int16_t* recording,
+                  size_t recorded_samples, bool online, int output_volume,
+                  VoiceReply* reply) {
+    if (recorded_samples < kAudioSampleRate / 5 || reply == nullptr) {
+        ESP_LOGW(kTag, "recording too short: %u samples",
+                 static_cast<unsigned>(recorded_samples));
+        return false;
+    }
+    if (!online) {
+        ESP_LOGW(kTag, "offline; playing local recording");
+        ESP_ERROR_CHECK(PlayLocalRecording(
+            audio, recording, recorded_samples, output_volume));
+        return false;
+    }
+
+    ESP_LOGI(kTag, "sending %.2f seconds to Pupbox",
+             static_cast<double>(recorded_samples) / kAudioSampleRate);
+    ESP_LOGI(kTag, "main stack free before request: %u bytes",
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    const esp_err_t upload_result = UploadVoiceRecording(
+        recording, recorded_samples, PUPBOX_ACCESS_TOKEN, reply);
+    ESP_LOGI(kTag, "main stack free after request: %u bytes",
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    if (upload_result != ESP_OK) {
+        ESP_LOGE(kTag, "voice request failed: %s",
+                 esp_err_to_name(upload_result));
+        ESP_LOGW(kTag, "playing local diagnostic fallback");
+        ESP_ERROR_CHECK(PlayLocalRecording(
+            audio, recording, recorded_samples, output_volume));
+        return false;
+    }
+
+    const esp_err_t playback_result = StreamVoiceReply(
+        *reply, PUPBOX_ACCESS_TOKEN, &audio, output_volume);
+    if (playback_result != ESP_OK) {
+        ESP_LOGE(kTag, "remote reply playback failed: %s",
+                 esp_err_to_name(playback_result));
+        return false;
+    }
+    return true;
 }
 }
 
@@ -280,59 +367,69 @@ extern "C" void app_main() {
         }
         ESP_ERROR_CHECK(audio.SetInputEnabled(false));
 
-        const bool automatic_mode = recorded_samples < kTapThresholdSamples;
-        if (automatic_mode) {
-            ESP_LOGI(kTag, "K2 tap detected; automatic listening starts after cue");
+        const bool conversation_mode =
+            recorded_samples < kTapThresholdSamples;
+        if (conversation_mode) {
+            ESP_LOGI(kTag,
+                     "K2 tap detected; conversation starts after cue");
             ESP_ERROR_CHECK(PlayListeningCue(audio, output_volume));
+            AutoCaptureResult capture_result = AutoCaptureResult::kTimeout;
             ESP_ERROR_CHECK(CaptureAutomaticUtterance(
-                audio, recording, &recorded_samples));
-            if (recorded_samples == 0) {
+                audio, recording, kInitialWaitSeconds, &recorded_samples,
+                &capture_result));
+            if (capture_result != AutoCaptureResult::kSpeech) {
+                ESP_LOGI(kTag, "conversation ended before the first turn");
                 continue;
             }
         } else {
             ESP_LOGI(kTag, "K2 hold detected; push-to-talk recording ended");
         }
 
-        if (recorded_samples < kAudioSampleRate / 5) {
-            ESP_LOGW(kTag, "recording too short: %u samples",
-                     static_cast<unsigned>(recorded_samples));
+        VoiceReply reply = {};
+        if (!RunVoiceTurn(audio, recording, recorded_samples,
+                          wifi_result == ESP_OK, output_volume, &reply)) {
+            continue;
+        }
+        if (!conversation_mode) {
             WaitForButtonRelease(audio, kRecordButtonPin);
+            vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
-        if (wifi_result == ESP_OK) {
-            ESP_LOGI(kTag, "sending %.2f seconds to Pupbox",
-                     static_cast<double>(recorded_samples) / kAudioSampleRate);
-            ESP_LOGI(kTag, "main stack free before request: %u bytes",
-                     static_cast<unsigned>(
-                         uxTaskGetStackHighWaterMark(nullptr)));
-            VoiceReply reply = {};
-            const esp_err_t upload_result = UploadVoiceRecording(
-                recording, recorded_samples, PUPBOX_ACCESS_TOKEN, &reply);
-            ESP_LOGI(kTag, "main stack free after request: %u bytes",
-                     static_cast<unsigned>(
-                         uxTaskGetStackHighWaterMark(nullptr)));
-            if (upload_result == ESP_OK) {
-                const esp_err_t playback_result = StreamVoiceReply(
-                    reply, PUPBOX_ACCESS_TOKEN, &audio, output_volume);
-                if (playback_result != ESP_OK) {
-                    ESP_LOGE(kTag, "remote reply playback failed: %s",
-                             esp_err_to_name(playback_result));
-                }
-            } else {
-                ESP_LOGE(kTag, "voice request failed: %s",
-                         esp_err_to_name(upload_result));
-                ESP_LOGW(kTag, "playing local diagnostic fallback");
-                ESP_ERROR_CHECK(PlayLocalRecording(
-                    audio, recording, recorded_samples, output_volume));
+        size_t completed_turns = 1;
+        while (completed_turns < kMaxConversationTurns &&
+               !EndsConversation(reply)) {
+            ESP_LOGI(kTag,
+                     "conversation waiting for follow-up: turn=%u timeout=%u seconds",
+                     static_cast<unsigned>(completed_turns + 1),
+                     static_cast<unsigned>(kFollowupWaitSeconds));
+            ESP_ERROR_CHECK(PlayListeningCue(audio, output_volume));
+            AutoCaptureResult capture_result = AutoCaptureResult::kTimeout;
+            ESP_ERROR_CHECK(CaptureAutomaticUtterance(
+                audio, recording, kFollowupWaitSeconds, &recorded_samples,
+                &capture_result));
+            if (capture_result == AutoCaptureResult::kCanceled) {
+                ESP_LOGI(kTag, "conversation canceled by K2");
+                break;
             }
-        } else {
-            ESP_LOGW(kTag, "offline; playing local recording");
-            ESP_ERROR_CHECK(PlayLocalRecording(
-                audio, recording, recorded_samples, output_volume));
+            if (capture_result == AutoCaptureResult::kTimeout) {
+                ESP_LOGI(kTag, "conversation ended after inactivity");
+                break;
+            }
+            reply = {};
+            if (!RunVoiceTurn(audio, recording, recorded_samples, true,
+                              output_volume, &reply)) {
+                ESP_LOGW(kTag, "conversation ended after a failed turn");
+                break;
+            }
+            ++completed_turns;
         }
-
-        WaitForButtonRelease(audio, kRecordButtonPin);
+        if (EndsConversation(reply)) {
+            ESP_LOGI(kTag, "conversation ended by farewell intent");
+        } else if (completed_turns >= kMaxConversationTurns) {
+            ESP_LOGI(kTag, "conversation reached the %u turn limit",
+                     static_cast<unsigned>(kMaxConversationTurns));
+        }
         vTaskDelay(pdMS_TO_TICKS(150));
     }
 }

@@ -24,6 +24,7 @@ var activitySequences = map[string]*atomic.Uint64{
 	"magic":         {},
 	"presence":      {},
 	"greeting":      {},
+	"farewell":      {},
 	"chat":          {},
 }
 
@@ -146,6 +147,13 @@ func Activities() []Activity {
 			Category: "chat",
 		},
 		{
+			ID:       "farewell",
+			Label:    "再见",
+			Prompt:   "豆豆再见",
+			Reply:    "好呀，豆豆先休息啦。下次再一起玩。",
+			Category: "chat",
+		},
+		{
 			ID:       "presence",
 			Label:    "陪伴",
 			Prompt:   "豆豆在做什么",
@@ -181,6 +189,8 @@ func PlanActivity(text string) (Activity, bool) {
 	}
 
 	switch {
+	case equalsAny(normalized, "再见", "再见啦", "拜拜", "拜拜啦", "晚安", "睡觉吧", "休息吧", "你休息吧", "下次再玩"):
+		return byID("farewell")
 	case containsAny(normalized, "你还会干啥", "你还会干什么", "你还会做什么", "你会做什么", "你会干啥", "你会干什么", "你能做什么", "你能干啥", "可以玩什么", "有什么好玩", "都会什么") ||
 		equalsAny(normalized, "怎么玩", "玩什么", "干什么", "做什么"):
 		return byID("guide")
@@ -905,6 +915,13 @@ var activityReplyVariants = map[string][]string{
 		"你好呀，你的声音豆豆听见了。",
 		"汪，你好呀，豆豆来啦。",
 		"你好，豆豆今天也想和你聊天。",
+	},
+	"farewell": {
+		"好呀，豆豆先休息啦。下次再一起玩。",
+		"拜拜，豆豆会等你下次再来。",
+		"晚安呀，豆豆也要闭上眼睛休息啦。",
+		"好，今天先玩到这里。豆豆跟你说再见。",
+		"拜拜啦，豆豆把今天的开心收好啦。",
 	},
 	"chat": {
 		"好呀，豆豆在听你说。",

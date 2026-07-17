@@ -5,15 +5,19 @@ This ESP-IDF firmware targets the Waveshare ESP32-S3-AUDIO-Board.
 The current bench prototype supports a complete cloud conversation:
 
 1. Press `K1` to increase the playback volume by 10%.
-2. Tap `K2`, wait for the short cue, and speak normally. Local VAD starts on
-   speech and stops after about 1.1 seconds of silence.
+2. Tap `K2` once to start a short conversation. After each listening cue,
+   speak normally. Local VAD starts on speech and stops after about 1.1
+   seconds of silence.
 3. Hold `K2` for at least 450 ms to use push-to-talk instead; release it to
    finish recording.
 4. The board uploads the recording, runs Pupbox STT/reply/TTS, and plays the
    reply through the speaker.
 5. Press `K3` to decrease the playback volume by 10%.
-6. Automatic listening exits without an API request if no speech starts in
-   eight seconds. Every recording stops after at most eight seconds.
+6. After a successful reply, the board plays another cue and listens for a
+   follow-up without another button press. The first turn waits eight seconds;
+   follow-ups wait 20 seconds. Press `K2` while listening to end the session.
+7. A session also ends after a farewell reply, a failed turn, or eight turns.
+   Every individual recording stops after at most eight seconds.
 
 The microphone remains at 24 kHz for the board codec. Before upload, firmware
 resamples speech to 16 kHz mono PCM to reduce request size by one third. TTS
@@ -25,9 +29,10 @@ fallback.
 
 Automatic recording keeps roughly 300 ms before detected speech to avoid
 clipping the first syllable and retains about 200 ms of trailing silence. Very
-short sounds are ignored locally. The initial thresholds are intentionally
-conservative and should be tuned with real child speech and household noise
-before continuous conversation mode is enabled.
+short sounds are ignored locally. Playback and microphone capture never run
+at the same time, so the dog does not record its own reply. The initial
+thresholds are intentionally conservative and should continue to be tuned
+with real child speech and household noise.
 
 With the USB-C connector at the top, the five tiny switches run clockwise
 along the upper-right edge: `RESET`, `BOOT`, `K3`, `K2`, and `K1`. They are

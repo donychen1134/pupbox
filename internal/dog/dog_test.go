@@ -62,6 +62,23 @@ func TestPlanActivityStripsDogAddressForExplicitCommands(t *testing.T) {
 	}
 }
 
+func TestPlanActivityFarewell(t *testing.T) {
+	for _, text := range []string{"再见", "豆豆拜拜", "小狗晚安", "你休息吧"} {
+		got, ok := PlanActivity(text)
+		if !ok || got.ID != "farewell" {
+			t.Errorf("PlanActivity(%q) = %#v ok=%v, want farewell", text, got, ok)
+		}
+	}
+}
+
+func TestPlanActivityDoesNotTreatSleepConversationAsFarewell(t *testing.T) {
+	for _, text := range []string{"我不想睡觉", "你为什么要睡觉", "妈妈在休息"} {
+		if got, ok := PlanActivity(text); ok && got.ID == "farewell" {
+			t.Errorf("PlanActivity(%q) = %#v, unexpectedly ended conversation", text, got)
+		}
+	}
+}
+
 func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 	tests := []struct {
 		text string
