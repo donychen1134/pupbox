@@ -85,6 +85,8 @@ esp_err_t ConnectWifi(const char* ssid, const char* password) {
         esp_wifi_set_config(WIFI_IF_STA, &wifi_config), kTag, "set Wi-Fi config");
     ESP_LOGI(kTag, "connecting to configured 2.4 GHz network");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), kTag, "start Wi-Fi");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), kTag,
+                        "disable Wi-Fi power saving");
 
     EventBits_t bits = xEventGroupWaitBits(
         connection_events, kConnectedBit, pdFALSE, pdFALSE, kInitialConnectTimeout);

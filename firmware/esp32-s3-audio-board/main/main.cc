@@ -6,9 +6,11 @@
 #include "backend_health.h"
 #include "board_config.h"
 #include "secrets.h"
+#include "voice_client.h"
 #include "wifi_station.h"
 
 #include "esp_heap_caps.h"
+#include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -43,6 +45,22 @@ void WaitForButtonRelease(AudioBoard& audio, uint32_t button_pin) {
     while (ButtonPressed(audio, button_pin)) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+}
+
+esp_err_t PlayLocalRecording(AudioBoard& audio, const int16_t* recording,
+                             size_t recorded_samples, int output_volume) {
+    ESP_RETURN_ON_ERROR(audio.SetOutputEnabled(true), kTag,
+                        "enable local playback");
+    ESP_RETURN_ON_ERROR(audio.SetOutputVolume(output_volume), kTag,
+                        "set local playback volume");
+    for (size_t offset = 0; offset < recorded_samples;) {
+        const size_t count =
+            std::min(kChunkSamples, recorded_samples - offset);
+        ESP_RETURN_ON_ERROR(audio.Write(recording + offset, count), kTag,
+                            "write local playback");
+        offset += count;
+    }
+    return audio.SetOutputEnabled(false);
 }
 }
 
@@ -112,21 +130,37 @@ extern "C" void app_main() {
             continue;
         }
 
-        ESP_LOGI(kTag, "playing %.2f seconds",
-                 static_cast<double>(recorded_samples) / kAudioSampleRate);
-        ESP_ERROR_CHECK(audio.SetOutputEnabled(true));
-        ESP_ERROR_CHECK(audio.SetOutputVolume(output_volume));
-        for (size_t offset = 0; offset < recorded_samples;) {
-            const size_t count =
-                std::min(kChunkSamples, recorded_samples - offset);
-            if (audio.Write(recording + offset, count) != ESP_OK) {
-                ESP_LOGE(kTag, "audio write failed");
-                break;
+        if (wifi_result == ESP_OK) {
+            ESP_LOGI(kTag, "sending %.2f seconds to Pupbox",
+                     static_cast<double>(recorded_samples) / kAudioSampleRate);
+            ESP_LOGI(kTag, "main stack free before request: %u bytes",
+                     static_cast<unsigned>(
+                         uxTaskGetStackHighWaterMark(nullptr)));
+            VoiceReply reply = {};
+            const esp_err_t upload_result = UploadVoiceRecording(
+                recording, recorded_samples, PUPBOX_ACCESS_TOKEN, &reply);
+            ESP_LOGI(kTag, "main stack free after request: %u bytes",
+                     static_cast<unsigned>(
+                         uxTaskGetStackHighWaterMark(nullptr)));
+            if (upload_result == ESP_OK) {
+                const esp_err_t playback_result = StreamVoiceReply(
+                    reply, PUPBOX_ACCESS_TOKEN, &audio, output_volume);
+                if (playback_result != ESP_OK) {
+                    ESP_LOGE(kTag, "remote reply playback failed: %s",
+                             esp_err_to_name(playback_result));
+                }
+            } else {
+                ESP_LOGE(kTag, "voice request failed: %s",
+                         esp_err_to_name(upload_result));
+                ESP_LOGW(kTag, "playing local diagnostic fallback");
+                ESP_ERROR_CHECK(PlayLocalRecording(
+                    audio, recording, recorded_samples, output_volume));
             }
-            offset += count;
+        } else {
+            ESP_LOGW(kTag, "offline; playing local recording");
+            ESP_ERROR_CHECK(PlayLocalRecording(
+                audio, recording, recorded_samples, output_volume));
         }
-        ESP_ERROR_CHECK(audio.SetOutputEnabled(false));
-        ESP_LOGI(kTag, "playback finished");
 
         WaitForButtonRelease(audio, kRecordButtonPin);
         vTaskDelay(pdMS_TO_TICKS(150));

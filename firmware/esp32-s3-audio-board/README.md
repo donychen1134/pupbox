@@ -2,16 +2,22 @@
 
 This ESP-IDF firmware targets the Waveshare ESP32-S3-AUDIO-Board.
 
-The first milestone is deliberately offline:
+The current bench prototype supports a complete cloud conversation:
 
 1. Press `K1` to increase the playback volume by 10%.
 2. Hold `K2` to record from the onboard microphone.
-3. Release `K2` to play the recording through the speaker.
+3. Release `K2` to upload the recording, run Pupbox STT/reply/TTS, and play
+   the reply through the speaker.
 4. Press `K3` to decrease the playback volume by 10%.
 5. Recording stops automatically after eight seconds.
 
-This verifies the ESP32-S3, PSRAM, ES7210 microphone codec, ES8311 speaker
-codec, amplifier, and physical button before Wi-Fi or Pupbox APIs are added.
+The microphone remains at 24 kHz for the board codec. Before upload, firmware
+resamples speech to 16 kHz mono PCM to reduce request size by one third. TTS
+PCM remains at 24 kHz for playback quality. The reply client buffers slow
+first-time TTS completely so playback stays continuous, while cached or
+faster-than-realtime audio can begin after a shorter prebuffer. If Wi-Fi or
+the voice request fails, the board plays the local recording as a diagnostic
+fallback.
 
 With the USB-C connector at the top, the five tiny switches run clockwise
 along the upper-right edge: `RESET`, `BOOT`, `K3`, `K2`, and `K1`. They are
@@ -37,9 +43,11 @@ ESP32-S3 does not support 5 GHz Wi-Fi.
 
 After Wi-Fi connects, a background task synchronizes the clock with SNTP and
 checks `https://pupbox.983457.xyz/api/health`. Serial logs report DNS, secure
-connection, first-byte, and total timings without logging credentials or the
-response body. Button recording and playback remain available during this
-diagnostic task.
+connection, first-byte, upload, STT, reply buffering, underrun, and total
+timings without logging credentials, transcripts, replies, or response
+bodies. TCP buffers are enlarged for the high-latency VPS connection, and
+Wi-Fi power saving is disabled during this latency-focused prototype. Revisit
+that power setting before battery testing.
 
 The 16 MB flash uses two 4 MB OTA application slots plus a data partition.
 This leaves room for the HTTPS and voice client while reserving a rollback
@@ -50,8 +58,8 @@ slot for future over-the-air firmware updates.
 When someone can stay beside the connected board, flash and then monitor it:
 
 ```bash
-idf.py -p /dev/cu.usbmodem101 flash
-idf.py -p /dev/cu.usbmodem101 monitor
+idf.py -p "$PUPBOX_SERIAL_PORT" flash
+idf.py -p "$PUPBOX_SERIAL_PORT" monitor
 ```
 
 If power or USB is interrupted during flashing, the ESP32-S3 ROM downloader

@@ -3,12 +3,17 @@
 #include "driver/gpio.h"
 
 constexpr int kAudioSampleRate = 24000;
+constexpr int kVoiceUploadSampleRate = 16000;
 constexpr int kInitialOutputVolume = 50;
 constexpr int kOutputVolumeStep = 10;
 
 constexpr char kBackendHost[] = "pupbox.983457.xyz";
 constexpr char kBackendHealthURL[] =
     "https://pupbox.983457.xyz/api/health";
+constexpr char kBackendVoiceURL[] =
+    "https://pupbox.983457.xyz/api/voice?tts=off";
+constexpr char kBackendSpeechStreamURL[] =
+    "https://pupbox.983457.xyz/api/speech-stream";
 
 constexpr gpio_num_t kI2CSCLGPIO = GPIO_NUM_10;
 constexpr gpio_num_t kI2CSDAGPIO = GPIO_NUM_11;
