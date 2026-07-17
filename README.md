@@ -21,6 +21,8 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Private on-disk TTS caching and background warmup for common reviewed replies.
 - Progressive CosyVoice PCM playback for uncached child-facing replies, with complete-audio fallback.
 - End-to-end turn timing persisted by trace ID, including upload, STT, reply, first audio, and playback.
+- ESP32-S3-AUDIO-Board firmware with hardware-verified microphone recording,
+  PSRAM buffering, speaker playback, and user-key volume control.
 
 ## Interaction Model
 
@@ -42,6 +44,8 @@ internal/dog/            persona, safety rules, activities, hardware action name
 internal/dashscopeapi/   direct DashScope HTTP client for Qwen-ASR and CosyVoice
 internal/openaiapi/      direct OpenAI HTTP client
 internal/server/         HTTP API and static file serving
+firmware/esp32-s3-audio-board/
+                         ESP-IDF firmware and bench-test instructions
 web/static/index.html    parent/debug UI
 web/static/toy.html      child-facing toy-mode UI
 Makefile                 repeatable local commands
@@ -146,6 +150,11 @@ See [docs/deploy-vps.md](docs/deploy-vps.md) for the GitHub Release, systemd, an
 See [docs/software-roadmap.md](docs/software-roadmap.md) for the remaining phone-validation work and [docs/hardware-roadmap.md](docs/hardware-roadmap.md) for the staged path to an ESP32-S3 bench prototype and a supervised plush-dog test.
 
 See [docs/project-review.md](docs/project-review.md) for the current infrastructure, model, networking, privacy, and final-device risk review.
+
+The first Waveshare ESP32-S3-AUDIO-Board milestone has been verified on real
+hardware: hold `K2` to record, release it to play back, and use `K1`/`K3` to
+adjust volume. See [firmware/esp32-s3-audio-board/README.md](firmware/esp32-s3-audio-board/README.md)
+for the toolchain, button layout, flashing, and recovery procedure.
 
 The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. After at least three established scene turns, a reviewed surprise card may advance animal, travel, food, bubble, or magic play. Surprise cards have a three-turn cooldown, stay within the recent scene, and end with a sound or two-option prompt that a toddler can answer with one word. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 
