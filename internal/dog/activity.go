@@ -189,7 +189,7 @@ func PlanActivity(text string) (Activity, bool) {
 	}
 
 	switch {
-	case equalsAny(normalized, "再见", "再见啦", "拜拜", "拜拜啦", "晚安", "睡觉吧", "休息吧", "你休息吧", "下次再玩"):
+	case isFarewellIntent(normalized):
 		return byID("farewell")
 	case containsAny(normalized, "你还会干啥", "你还会干什么", "你还会做什么", "你会做什么", "你会干啥", "你会干什么", "你能做什么", "你能干啥", "可以玩什么", "有什么好玩", "都会什么") ||
 		equalsAny(normalized, "怎么玩", "玩什么", "干什么", "做什么"):
@@ -529,6 +529,16 @@ func isStoryAffirmation(text string) bool {
 	return equalsAny(text, "想听", "要听", "要听啊", "好呀", "好啊", "好的", "可以", "嗯要听")
 }
 
+func isFarewellIntent(text string) bool {
+	if containsAny(text, "不想睡", "不要睡", "不睡觉", "为什么要睡") {
+		return false
+	}
+	return equalsAny(text, "再见", "再见啦", "拜拜", "拜拜啦", "晚安", "睡觉吧", "休息吧", "你休息吧", "下次再玩") ||
+		containsAny(text, "我要睡觉", "我去睡觉", "要睡觉啦", "要睡觉了", "先睡觉", "先拜拜", "先再见") ||
+		(strings.Contains(text, "拜拜") && utf8.RuneCountInString(text) <= 24) ||
+		(strings.Contains(text, "再见") && utf8.RuneCountInString(text) <= 24)
+}
+
 func hasPendingStoryOffer(history []Turn) bool {
 	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
 		reply := normalizeToddlerIntentText(history[i].Reply)
@@ -600,7 +610,7 @@ func babbleActivities() []Activity {
 			ID:       "clap",
 			Label:    "回应",
 			Prompt:   "豆豆回应",
-			Reply:    "嗯嗯，豆豆也嗯嗯。",
+			Reply:    "嗯，豆豆在这里。我们猜个小动物，好不好？",
 			Category: "chat",
 		},
 		{

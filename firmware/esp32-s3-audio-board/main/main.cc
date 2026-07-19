@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 #include "audio_board.h"
@@ -147,6 +148,39 @@ esp_err_t PlayCaptureCompleteCue(AudioBoard& audio, int output_volume) {
     return audio.SetOutputEnabled(false);
 }
 
+esp_err_t PlayNurseryMelody(AudioBoard& audio, int output_volume) {
+    constexpr int32_t kNotePeriods[] = {46, 41, 36, 46, 46, 41, 36, 31};
+    constexpr size_t kFramesPerNote = 12;
+    constexpr size_t kSoundFramesPerNote = 10;
+    constexpr int32_t kAmplitude = 1350;
+    int16_t samples[kChunkSamples];
+
+    ESP_RETURN_ON_ERROR(audio.SetOutputEnabled(true), kTag,
+                        "enable nursery melody");
+    ESP_RETURN_ON_ERROR(audio.SetOutputVolume(output_volume), kTag,
+                        "set nursery melody volume");
+    for (int32_t period : kNotePeriods) {
+        for (size_t frame = 0; frame < kFramesPerNote; ++frame) {
+            if (frame >= kSoundFramesPerNote) {
+                std::memset(samples, 0, sizeof(samples));
+            } else {
+                for (size_t index = 0; index < kChunkSamples; ++index) {
+                    const int32_t phase = static_cast<int32_t>(
+                        (frame * kChunkSamples + index) % period);
+                    const int32_t triangle = phase < period / 2
+                                                 ? phase
+                                                 : period - phase;
+                    samples[index] = static_cast<int16_t>(
+                        -kAmplitude + triangle * (kAmplitude * 4 / period));
+                }
+            }
+            ESP_RETURN_ON_ERROR(audio.Write(samples, kChunkSamples), kTag,
+                                "write nursery melody");
+        }
+    }
+    return audio.SetOutputEnabled(false);
+}
+
 esp_err_t PlaySessionEndCue(AudioBoard& audio, int output_volume) {
     constexpr size_t kToneFrames = 6;
     constexpr size_t kSilenceFrames = 3;
@@ -174,6 +208,24 @@ esp_err_t PlaySessionEndCue(AudioBoard& audio, int output_volume) {
                             "write session end cue");
     }
     return audio.SetOutputEnabled(false);
+}
+
+esp_err_t PlaySessionFarewell(AudioBoard& audio, int output_volume) {
+    if (!WifiConnected()) {
+        return PlaySessionEndCue(audio, output_volume);
+    }
+    VoiceReply farewell = {};
+    std::snprintf(farewell.reply, sizeof(farewell.reply), "%s",
+                  "拜拜，豆豆会等你下次再来。");
+    PlaybackMetrics metrics = {};
+    const esp_err_t result = StreamVoiceReply(
+        farewell, PUPBOX_ACCESS_TOKEN, &audio, output_volume, &metrics);
+    if (result == ESP_OK) {
+        return ESP_OK;
+    }
+    ESP_LOGW(kTag, "spoken farewell failed; using local cue: %s",
+             esp_err_to_name(result));
+    return PlaySessionEndCue(audio, output_volume);
 }
 
 esp_err_t CaptureAutomaticUtterance(AudioBoard& audio, int16_t* recording,
@@ -351,6 +403,15 @@ bool RunVoiceTurn(AudioBoard& audio, const int16_t* recording,
         return false;
     }
 
+    if (std::strcmp(reply->source, "activity:nursery_rhyme") == 0) {
+        const esp_err_t melody_result =
+            PlayNurseryMelody(audio, output_volume);
+        if (melody_result != ESP_OK) {
+            ESP_LOGW(kTag, "nursery melody failed: %s",
+                     esp_err_to_name(melody_result));
+        }
+    }
+
     PlaybackMetrics metrics = {};
     const esp_err_t playback_result = StreamVoiceReply(
         *reply, PUPBOX_ACCESS_TOKEN, &audio, output_volume, &metrics);
@@ -478,7 +539,7 @@ extern "C" void app_main() {
             }
             if (capture_result == AutoCaptureResult::kTimeout) {
                 ESP_LOGI(kTag, "conversation ended after inactivity");
-                ESP_ERROR_CHECK(PlaySessionEndCue(audio, output_volume));
+                ESP_ERROR_CHECK(PlaySessionFarewell(audio, output_volume));
                 break;
             }
             reply = {};
@@ -494,7 +555,7 @@ extern "C" void app_main() {
         } else if (completed_turns >= kMaxConversationTurns) {
             ESP_LOGI(kTag, "conversation reached the %u turn limit",
                      static_cast<unsigned>(kMaxConversationTurns));
-            ESP_ERROR_CHECK(PlaySessionEndCue(audio, output_volume));
+            ESP_ERROR_CHECK(PlaySessionFarewell(audio, output_volume));
         }
         vTaskDelay(pdMS_TO_TICKS(150));
     }

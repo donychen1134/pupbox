@@ -63,7 +63,7 @@ func TestPlanActivityStripsDogAddressForExplicitCommands(t *testing.T) {
 }
 
 func TestPlanActivityFarewell(t *testing.T) {
-	for _, text := range []string{"再见", "豆豆拜拜", "小狗晚安", "你休息吧"} {
+	for _, text := range []string{"再见", "豆豆拜拜", "小狗晚安", "你休息吧", "好啦，我要睡觉啦，拜拜"} {
 		got, ok := PlanActivity(text)
 		if !ok || got.ID != "farewell" {
 			t.Errorf("PlanActivity(%q) = %#v ok=%v, want farewell", text, got, ok)
@@ -547,6 +547,30 @@ func TestSceneSurpriseStaysOffUnrelatedShortConversation(t *testing.T) {
 	}
 	if activity, ok := PlanSceneSurprise("嗯", history); ok {
 		t.Fatalf("unrelated chat got surprise: %#v", activity)
+	}
+}
+
+func TestSceneSurpriseDoesNotInterruptAnswerToPreviousQuestion(t *testing.T) {
+	history := []Turn{
+		{User: "你好", Reply: "你好呀。"},
+		{User: "玩颜色", Reply: "红色像苹果。"},
+		{User: "颜色游戏是什么", Reply: "黄色像香蕉。你要不要试试呀？"},
+	}
+	for _, text := range []string{"嗯", "假装按啊", "草莓味"} {
+		if activity, ok := PlanSceneSurprise(text, history); ok {
+			t.Errorf("PlanSceneSurprise(%q) = %#v, interrupted pending answer", text, activity)
+		}
+	}
+}
+
+func TestSceneSurpriseDoesNotInterruptFarewellSentence(t *testing.T) {
+	history := []Turn{
+		{User: "讲故事", Reply: "小兔子找到一朵云。"},
+		{User: "然后呢", Reply: "云朵变成了小船。"},
+		{User: "真好玩", Reply: "小船慢慢向前开。"},
+	}
+	if activity, ok := PlanSceneSurprise("好啦，我要睡觉啦，拜拜", history); ok {
+		t.Fatalf("farewell was interrupted by %#v", activity)
 	}
 }
 

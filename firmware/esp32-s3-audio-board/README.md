@@ -22,8 +22,9 @@ The current bench prototype supports a complete cloud conversation:
 
 A bright cue means the microphone has started listening. A short descending
 double tone means speech capture has ended and the board is processing the
-reply. The longer, softer descending cue means the conversation has gone to
-sleep.
+reply. Nursery-rhyme activities start with a short toy melody. After inactivity
+or the turn limit, the board says goodbye; if the network is unavailable, it
+falls back to the longer, softer descending sleep cue.
 
 The microphone remains at 24 kHz for the board codec. Before upload, firmware
 resamples speech to 16 kHz mono PCM to reduce request size by one third. TTS

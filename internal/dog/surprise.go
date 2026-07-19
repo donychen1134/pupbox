@@ -70,6 +70,9 @@ func PlanSceneSurprise(text string, history []Turn) (Activity, bool) {
 	if len(history) < 3 || !surpriseEligibleText(text) {
 		return Activity{}, false
 	}
+	if LooksLikeToddlerBabble(text) || recentReplyInvitesContext(history) {
+		return Activity{}, false
+	}
 	if surpriseCount(history) >= 2 || turnsSinceSurprise(history) < 3 {
 		return Activity{}, false
 	}
@@ -96,6 +99,7 @@ func surpriseEligibleText(text string) bool {
 	return !containsAny(normalized,
 		"为什么", "怎么", "什么", "哪里", "哪个", "谁", "是不是", "能不能", "会不会",
 		"讲", "唱", "告诉", "再说", "听不懂", "没听懂", "不清楚", "不要", "别", "不想", "没有",
+		"再见", "拜拜", "晚安", "睡觉", "休息",
 	)
 }
 
