@@ -30,6 +30,7 @@ struct PlaybackMetrics {
     char playback_error[32];
 };
 
+void StartVoiceSession();
 esp_err_t UploadVoiceRecording(const int16_t* samples, size_t sample_count,
                                const char* access_token,
                                VoiceReply* response);

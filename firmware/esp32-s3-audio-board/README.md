@@ -26,6 +26,10 @@ reply. Nursery-rhyme activities start with a short toy melody. After inactivity
 or the turn limit, the board says goodbye; if the network is unavailable, it
 falls back to the longer, softer descending sleep cue.
 
+Each new `K2` conversation creates a fresh backend session. Automatic follow-up
+turns share that session for continuity, while a later conversation does not
+inherit an old story or game after the board has said goodbye.
+
 The microphone remains at 24 kHz for the board codec. Before upload, firmware
 resamples speech to 16 kHz mono PCM to reduce request size by one third. TTS
 PCM remains at 24 kHz for playback quality. The reply client buffers slow

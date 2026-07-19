@@ -476,6 +476,7 @@ extern "C" void app_main() {
             continue;
         }
 
+        StartVoiceSession();
         ESP_LOGI(kTag, "K2 recording started");
         ESP_ERROR_CHECK(audio.SetInputEnabled(true));
         size_t recorded_samples = 0;

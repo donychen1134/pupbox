@@ -13,6 +13,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
@@ -22,7 +23,7 @@
 namespace {
 constexpr char kTag[] = "voice_client";
 constexpr char kBoundary[] = "----pupbox-esp32-s3-audio";
-constexpr char kSessionID[] = "esp32-s3-audio-board";
+char session_id[48] = "esp32-s3-audio-board-boot";
 constexpr size_t kResponseCapacity = 16 * 1024;
 constexpr size_t kStreamLineCapacity = 20 * 1024;
 constexpr size_t kDecodedAudioCapacity = 12 * 1024;
@@ -376,10 +377,17 @@ esp_err_t ConfigureRequest(const char* url, const char* content_type,
                             client, "X-Pupbox-Access-Token", access_token),
                         kTag, "set access token");
     ESP_RETURN_ON_ERROR(esp_http_client_set_header(
-                            client, "X-Pupbox-Session-ID", kSessionID),
+                            client, "X-Pupbox-Session-ID", session_id),
                         kTag, "set session ID");
     return ESP_OK;
 }
+}
+
+void StartVoiceSession() {
+    std::snprintf(session_id, sizeof(session_id), "esp32-s3-%08lx%08lx",
+                  static_cast<unsigned long>(esp_random()),
+                  static_cast<unsigned long>(esp_random()));
+    ESP_LOGI(kTag, "started a fresh conversation session");
 }
 
 esp_err_t UploadVoiceRecording(const int16_t* samples, size_t sample_count,
