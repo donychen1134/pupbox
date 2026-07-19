@@ -87,6 +87,7 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		{text: "讲个古是吧", id: "story"},
 		{text: "我要听小狗故事", id: "story"},
 		{text: "一二三", id: "counting"},
+		{text: "玩叔叔游戏", id: "counting"},
 		{text: "找 红 色", id: "color_hunt"},
 		{text: "旺旺", id: "clap"},
 		{text: "我们玩声音游戏", id: "sound_game"},
@@ -370,6 +371,42 @@ func TestAnimalGuessRepeatsClueWhenShortAnswerIsUnclear(t *testing.T) {
 	}
 }
 
+func TestCountingOfferRecoversShushuTranscription(t *testing.T) {
+	history := []Turn{{User: "还有其他的吗", Reply: "豆豆还会数数哦。你想和豆豆玩数数游戏吗？"}}
+	activity, ok := PlanActivityWithHistory("叔叔有", history)
+	if !ok || activity.ID != "counting" || !strings.Contains(activity.Reply, "几") {
+		t.Fatalf("counting acceptance = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestEveryCountingRoundAcceptsItsAnswer(t *testing.T) {
+	for index, round := range countingRounds {
+		history := []Turn{{User: "玩数数", Reply: round.prompt, ActivityID: "counting"}}
+		activity, ok := PlanActivityWithHistory(countingNumberWords[round.answer], history)
+		if !ok || activity.ID != "counting" || !strings.Contains(activity.Reply, "答对啦") {
+			t.Errorf("round %d answer %d = %#v ok=%v", index, round.answer, activity, ok)
+		}
+	}
+}
+
+func TestCountingUnderstandsShiAsFourFromContext(t *testing.T) {
+	round := countingRounds[1]
+	history := []Turn{{User: "玩数数", Reply: round.prompt, ActivityID: "counting"}}
+	activity, ok := PlanActivityWithHistory("哦，那十四吗？", history)
+	if !ok || activity.ID != "counting" || !strings.Contains(activity.Reply, "答对啦") || !strings.Contains(activity.Reply, "四个") {
+		t.Fatalf("contextual four = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestCountingRepeatsQuestionAfterUnclearAnswer(t *testing.T) {
+	round := countingRounds[0]
+	history := []Turn{{User: "玩数数", Reply: round.prompt, ActivityID: "counting"}}
+	activity, ok := PlanActivityWithHistory("叔叔", history)
+	if !ok || activity.ID != "counting" || !strings.Contains(activity.Reply, "没听清数字") || !strings.Contains(activity.Reply, round.prompt) {
+		t.Fatalf("unclear counting answer = %#v ok=%v", activity, ok)
+	}
+}
+
 func TestPresenceActivityRotatesContent(t *testing.T) {
 	seen := make(map[string]bool)
 	for range 3 {
@@ -579,6 +616,28 @@ func TestSceneSurpriseDoesNotInterruptAnswerToPreviousQuestion(t *testing.T) {
 		if activity, ok := PlanSceneSurprise(text, history); ok {
 			t.Errorf("PlanSceneSurprise(%q) = %#v, interrupted pending answer", text, activity)
 		}
+	}
+}
+
+func TestSceneSurpriseDoesNotInterruptStructuredActivity(t *testing.T) {
+	history := []Turn{
+		{User: "今天玩什么", Reply: "可以猜动物或者数数。"},
+		{User: "玩数数", Reply: countingRounds[0].prompt, ActivityID: "counting"},
+		{User: "再说一次", Reply: countingRounds[0].prompt, ActivityID: "counting"},
+	}
+	if activity, ok := PlanSceneSurprise("哦，那十四吗", history); ok {
+		t.Fatalf("counting was interrupted by %#v", activity)
+	}
+}
+
+func TestSceneSurpriseNeedsSceneEvidenceFromMultipleTurns(t *testing.T) {
+	history := []Turn{
+		{User: "你好", Reply: "你好呀。"},
+		{User: "玩什么", Reply: "可以猜动物或者数数。"},
+		{User: "玩数数", Reply: "好，我们开始。"},
+	}
+	if activity, ok := PlanSceneSurprise("继续", history); ok {
+		t.Fatalf("one animal mention established a surprise scene: %#v", activity)
 	}
 }
 

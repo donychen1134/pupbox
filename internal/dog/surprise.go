@@ -73,6 +73,9 @@ func PlanSceneSurprise(text string, history []Turn) (Activity, bool) {
 	if LooksLikeToddlerBabble(text) || recentReplyInvitesContext(history) {
 		return Activity{}, false
 	}
+	if lastTurnHasStructuredActivity(history) {
+		return Activity{}, false
+	}
 	if surpriseCount(history) >= 2 || turnsSinceSurprise(history) < 3 {
 		return Activity{}, false
 	}
@@ -97,7 +100,7 @@ func surpriseEligibleText(text string) bool {
 		return false
 	}
 	return !containsAny(normalized,
-		"为什么", "怎么", "什么", "哪里", "哪个", "谁", "是不是", "能不能", "会不会",
+		"为什么", "怎么", "什么", "哪里", "哪个", "谁", "是不是", "能不能", "会不会", "吗",
 		"讲", "唱", "告诉", "再说", "听不懂", "没听懂", "不清楚", "不要", "别", "不想", "没有",
 		"再见", "拜拜", "晚安", "睡觉", "休息",
 	)
@@ -108,15 +111,23 @@ func detectSurpriseScene(text string, history []Turn) (surpriseScene, bool) {
 	bestIndex, bestScore := -1, 0
 	for index, scene := range surpriseScenes {
 		score := keywordScore(current, scene.keywords) * 4
+		evidenceTurns := 0
+		if keywordScore(current, scene.keywords) > 0 {
+			evidenceTurns++
+		}
 		for i := len(history) - 1; i >= 0 && i >= len(history)-4; i-- {
 			weight := len(history) - i
 			if weight > 3 {
 				weight = 3
 			}
 			weight = 4 - weight
-			score += keywordScore(normalizeToddlerIntentText(history[i].User+history[i].Reply), scene.keywords) * weight
+			turnScore := keywordScore(normalizeToddlerIntentText(history[i].User+history[i].Reply), scene.keywords)
+			if turnScore > 0 {
+				evidenceTurns++
+			}
+			score += turnScore * weight
 		}
-		if score > bestScore {
+		if evidenceTurns >= 2 && score > bestScore {
 			bestIndex, bestScore = index, score
 		}
 	}
@@ -124,6 +135,14 @@ func detectSurpriseScene(text string, history []Turn) (surpriseScene, bool) {
 		return surpriseScene{}, false
 	}
 	return surpriseScenes[bestIndex], true
+}
+
+func lastTurnHasStructuredActivity(history []Turn) bool {
+	if len(history) == 0 {
+		return false
+	}
+	activityID := history[len(history)-1].ActivityID
+	return activityID != "" && !strings.HasPrefix(activityID, surpriseActivityPrefix)
 }
 
 func keywordScore(text string, keywords []string) int {

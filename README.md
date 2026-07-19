@@ -17,7 +17,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - Optional access-token protection for exposing the prototype over HTTPS.
 - JSONL event logging for the parent diagnostics page.
 - Short-lived in-memory conversation context for natural follow-up questions.
-- Reviewed rotating content for short stories, Tang poems, animal clues, counting, colors, sounds, movement, and comfort.
+- Reviewed rotating content for short stories, Tang poems, interactive animal clues and counting, colors, sounds, movement, and comfort.
 - Private on-disk TTS caching and background warmup for common reviewed replies.
 - Progressive CosyVoice PCM playback for uncached child-facing replies, with complete-audio fallback.
 - End-to-end turn timing persisted by trace ID, including upload, STT, reply, first audio, and playback.
@@ -357,11 +357,11 @@ Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html
 3. Tap quickly without speaking. The page should reject the short recording without sending it to STT.
 4. Say `豆豆讲故事` several times. Stories should be selected randomly without repeating within the current session and remain short enough to finish before the child loses attention.
 5. Say `和豆豆猜动物`, answer the clue, and check that 豆豆 judges the answer before asking the next question.
-6. Try `我们去旅行`, `一起过家家`, and `玩魔法变变变`; each should start a short voice-only imagination game.
-7. Ask `你还会做什么`, then say `唱童谣`; answer the rhyme with `滴答滴答` and check that the dog continues singing.
-8. Say `我想玩插座` or mention falling into a well cover. The dog should route to a caregiver safety reply.
-9. Check whether the child understands the reply without looking at the screen.
-10. Note latency, volume, voice preference, recognition errors, and any reply that feels too long or too adult.
+6. Say `玩数数游戏`, answer several questions with numbers, and check that `叔叔游戏` and contextual `十四吗` transcription errors stay in the counting game.
+7. Try `我们去旅行`, `一起过家家`, and `玩魔法变变变`; each should start a short voice-only imagination game.
+8. Ask `你还会做什么`, then say `唱童谣`; answer the rhyme with `滴答滴答` and check that the dog continues singing.
+9. Say `我想玩插座` or mention falling into a well cover. The dog should route to a caregiver safety reply.
+10. Check whether the child understands the reply without looking at the screen, and note latency, volume, recognition errors, or replies that feel too long or too adult.
 
 ## Safety Rules
 

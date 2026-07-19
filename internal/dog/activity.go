@@ -77,7 +77,7 @@ func Activities() []Activity {
 			ID:       "counting",
 			Label:    "数数",
 			Prompt:   "豆豆数数",
-			Reply:    "豆豆伸出小爪子。一、二、三、四，四只小爪子都在这里。",
+			Reply:    "桌上有两颗草莓，又放来一颗。现在一共有几颗？",
 			Category: "game",
 			Action:   "paw_tap",
 		},
@@ -212,7 +212,7 @@ func PlanActivity(text string) (Activity, bool) {
 	case containsAny(normalized, "猜动物", "猜小动物", "动物游戏", "猜谜语", "猜个谜") ||
 		equalsAny(normalized, "动物", "小动物", "猜谜", "谜语"):
 		return byID("animal_guess")
-	case containsAny(normalized, "数数", "数一数", "一起数", "数数字") ||
+	case containsAny(normalized, "数数", "数一数", "一起数", "数数字", "叔叔游戏", "玩叔叔的游戏") ||
 		equalsAny(normalized, "数字", "一二三", "123"):
 		return byID("counting")
 	case containsAny(normalized, "唱童谣", "唱儿歌", "给我唱", "你唱个", "唱个歌", "唱一个", "唱一首", "唱首歌", "陪我唱", "一起唱") ||
@@ -254,6 +254,9 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if containsAny(normalized, "再唱一个", "再唱一首", "换个童谣", "换首童谣", "继续唱") ||
 		(equalsAny(normalized, "再来一个", "换一个") && hasRecentActivity(history, "nursery_rhyme")) {
 		return byID("nursery_rhyme")
+	}
+	if hasPendingCountingOffer(history) && isCountingAcceptance(normalized) {
+		return byID("counting")
 	}
 	if isStoryAffirmation(normalized) && (hasPendingStoryOffer(history) || hasRecentActivity(history, "story")) {
 		return activityWithHistory("story", history)
@@ -320,6 +323,8 @@ func continueRecentActivity(text string, history []Turn) (Activity, bool) {
 		return continueMagic(text)
 	case "animal_guess":
 		return continueAnimalGuess(text, previous.Reply)
+	case "counting":
+		return continueCounting(text, previous.Reply)
 	case "color_hunt":
 		if matchesShortChoice(text, "找到了", "找到啦", "在这里", "有一个") {
 			return fixedActivity("color_hunt", activityContinuationReplies["color_hunt"][0])
@@ -328,6 +333,82 @@ func continueRecentActivity(text string, history []Turn) (Activity, bool) {
 		return continueNurseryRhyme(text)
 	}
 	return Activity{}, false
+}
+
+type countingRound struct {
+	clue   string
+	answer int
+	prompt string
+}
+
+var countingRounds = []countingRound{
+	{clue: "两颗草莓", answer: 3, prompt: "桌上有两颗草莓，又放来一颗。现在一共有几颗？"},
+	{clue: "三颗星星", answer: 4, prompt: "天上有三颗星星，又亮起一颗。现在一共有几颗？"},
+	{clue: "一只小鸭", answer: 2, prompt: "池塘里有一只小鸭，又游来一只。现在一共有几只？"},
+	{clue: "四块积木", answer: 5, prompt: "豆豆搭了四块积木，再放上一块。现在一共有几块？"},
+	{clue: "三朵小花", answer: 3, prompt: "花园里开了三朵小花。一、二、三。这里有几朵花？"},
+}
+
+var countingNumberWords = map[int]string{1: "一", 2: "二", 3: "三", 4: "四", 5: "五"}
+
+func continueCounting(text, previousReply string) (Activity, bool) {
+	for index, round := range countingRounds {
+		if !strings.Contains(previousReply, round.clue) {
+			continue
+		}
+		next := countingRounds[(index+1)%len(countingRounds)]
+		answer := countingNumberWords[round.answer]
+		if matchesCountingAnswer(text, round.answer) {
+			return fixedActivity("counting", "答对啦，是"+answer+"个！下一题："+next.prompt)
+		}
+		if looksLikeCountingAnswer(text) {
+			return fixedActivity("counting", "差一点，这题是"+answer+"个。下一题："+next.prompt)
+		}
+		if utf8.RuneCountInString(text) <= 10 {
+			return fixedActivity("counting", "豆豆没听清数字，再听一次："+round.prompt)
+		}
+	}
+	return Activity{}, false
+}
+
+func matchesCountingAnswer(text string, answer int) bool {
+	normalized := normalizeCountingAnswer(text)
+	word := countingNumberWords[answer]
+	return normalized == word || normalized == "十"+word || normalized == string(rune('0'+answer))
+}
+
+func looksLikeCountingAnswer(text string) bool {
+	normalized := normalizeCountingAnswer(text)
+	for number, word := range countingNumberWords {
+		if normalized == word || normalized == "十"+word || normalized == string(rune('0'+number)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCountingAnswer(text string) string {
+	normalized := stripDogAddress(normalizeToddlerIntentText(text))
+	replacer := strings.NewReplacer(
+		"哦", "", "那", "", "应该", "", "答案", "", "一共", "",
+		"有", "", "是", "", "个", "", "颗", "", "只", "", "块", "", "朵", "", "下", "",
+		"吗", "", "吧", "", "呀", "", "啊", "", "呢", "",
+	)
+	return replacer.Replace(normalized)
+}
+
+func hasPendingCountingOffer(history []Turn) bool {
+	for i := len(history) - 1; i >= 0 && i >= len(history)-2; i-- {
+		reply := normalizeToddlerIntentText(history[i].Reply)
+		if strings.Contains(reply, "数数") && containsAny(reply, "吗", "要不要", "想不想", "想和豆豆") {
+			return true
+		}
+	}
+	return false
+}
+
+func isCountingAcceptance(text string) bool {
+	return containsAny(text, "数数", "叔叔") || equalsAny(text, "好", "好呀", "好啊", "好的", "可以", "要", "要玩", "嗯", "嗯嗯")
 }
 
 func continueNurseryRhyme(text string) (Activity, bool) {
@@ -889,12 +970,11 @@ var activityReplyVariants = map[string][]string{
 		"今天找圆圆的东西。盘子、球球，还有什么是圆的？",
 	},
 	"counting": {
-		"豆豆伸出小爪子。一、二、三、四，四只小爪子都在这里。",
-		"我们数三颗小星星。一颗、两颗、三颗，亮晶晶。",
-		"豆豆跳五下。一、二、三、四、五，停，抱抱自己。",
-		"数数小手指。一、二、三，再藏起一根，还剩几根呀？",
-		"慢慢数到六。一、二、三、四、五、六，豆豆摇六下尾巴。",
-		"我们数脚步。一小步、两小步、三小步，走到豆豆身边啦。",
+		"桌上有两颗草莓，又放来一颗。现在一共有几颗？",
+		"天上有三颗星星，又亮起一颗。现在一共有几颗？",
+		"池塘里有一只小鸭，又游来一只。现在一共有几只？",
+		"豆豆搭了四块积木，再放上一块。现在一共有几块？",
+		"花园里开了三朵小花。一、二、三。这里有几朵花？",
 	},
 	"sound_game": {
 		"豆豆唱一句：啦啦啦，汪汪汪。轮到你唱一个喜欢的声音啦。",
