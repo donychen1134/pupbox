@@ -23,8 +23,8 @@ constexpr size_t kMaxSamples = kAudioSampleRate * kMaxRecordingSeconds;
 constexpr size_t kChunkSamples = 240;
 constexpr size_t kTapThresholdSamples = kAudioSampleRate * 450 / 1000;
 constexpr size_t kInitialWaitSeconds = 8;
-constexpr size_t kFollowupWaitSeconds = 20;
-constexpr size_t kMaxConversationTurns = 8;
+constexpr size_t kFollowupWaitSeconds = 30;
+constexpr size_t kMaxConversationTurns = 20;
 constexpr size_t kVADPreRollSamples = kAudioSampleRate * 300 / 1000;
 constexpr size_t kVADStartFrames = 5;
 constexpr size_t kVADEndSilenceFrames = 110;
@@ -120,6 +120,35 @@ esp_err_t PlayListeningCue(AudioBoard& audio, int output_volume) {
         }
         ESP_RETURN_ON_ERROR(audio.Write(samples, kChunkSamples), kTag,
                             "write listening cue");
+    }
+    return audio.SetOutputEnabled(false);
+}
+
+esp_err_t PlaySessionEndCue(AudioBoard& audio, int output_volume) {
+    constexpr size_t kToneFrames = 6;
+    constexpr size_t kSilenceFrames = 3;
+    constexpr int32_t kCueAmplitude = 1400;
+    int16_t samples[kChunkSamples];
+
+    ESP_RETURN_ON_ERROR(audio.SetOutputEnabled(true), kTag,
+                        "enable session end cue");
+    ESP_RETURN_ON_ERROR(audio.SetOutputVolume(output_volume), kTag,
+                        "set session end cue volume");
+    for (size_t frame = 0; frame < kToneFrames * 2 + kSilenceFrames; ++frame) {
+        if (frame >= kToneFrames &&
+            frame < kToneFrames + kSilenceFrames) {
+            std::memset(samples, 0, sizeof(samples));
+        } else {
+            const int32_t period = frame < kToneFrames ? 48 : 72;
+            for (size_t index = 0; index < kChunkSamples; ++index) {
+                const int32_t phase = static_cast<int32_t>(
+                    (frame * kChunkSamples + index) % period);
+                samples[index] = phase < period / 2 ? kCueAmplitude
+                                                    : -kCueAmplitude;
+            }
+        }
+        ESP_RETURN_ON_ERROR(audio.Write(samples, kChunkSamples), kTag,
+                            "write session end cue");
     }
     return audio.SetOutputEnabled(false);
 }
@@ -299,8 +328,15 @@ bool RunVoiceTurn(AudioBoard& audio, const int16_t* recording,
         return false;
     }
 
+    PlaybackMetrics metrics = {};
     const esp_err_t playback_result = StreamVoiceReply(
-        *reply, PUPBOX_ACCESS_TOKEN, &audio, output_volume);
+        *reply, PUPBOX_ACCESS_TOKEN, &audio, output_volume, &metrics);
+    const esp_err_t metrics_result = ReportTurnMetrics(
+        *reply, metrics, PUPBOX_ACCESS_TOKEN);
+    if (metrics_result != ESP_OK) {
+        ESP_LOGW(kTag, "turn metrics were not persisted: %s",
+                 esp_err_to_name(metrics_result));
+    }
     if (playback_result != ESP_OK) {
         ESP_LOGE(kTag, "remote reply playback failed: %s",
                  esp_err_to_name(playback_result));
@@ -418,6 +454,7 @@ extern "C" void app_main() {
             }
             if (capture_result == AutoCaptureResult::kTimeout) {
                 ESP_LOGI(kTag, "conversation ended after inactivity");
+                ESP_ERROR_CHECK(PlaySessionEndCue(audio, output_volume));
                 break;
             }
             reply = {};
@@ -433,6 +470,7 @@ extern "C" void app_main() {
         } else if (completed_turns >= kMaxConversationTurns) {
             ESP_LOGI(kTag, "conversation reached the %u turn limit",
                      static_cast<unsigned>(kMaxConversationTurns));
+            ESP_ERROR_CHECK(PlaySessionEndCue(audio, output_volume));
         }
         vTaskDelay(pdMS_TO_TICKS(150));
     }

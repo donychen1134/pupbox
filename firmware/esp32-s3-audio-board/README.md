@@ -15,8 +15,9 @@ The current bench prototype supports a complete cloud conversation:
 5. Press `K3` to decrease the playback volume by 10%.
 6. After a successful reply, the board plays another cue and listens for a
    follow-up without another button press. The first turn waits eight seconds;
-   follow-ups wait 20 seconds. Press `K2` while listening to end the session.
-7. A session also ends after a farewell reply, a failed turn, or eight turns.
+   follow-ups wait 30 seconds. Press `K2` while listening to end the session.
+7. A session also ends after a farewell reply, a failed turn, or 20 turns.
+   Inactivity and the turn limit play a short descending rest cue before exit.
    Every individual recording stops after at most eight seconds.
 
 The microphone remains at 24 kHz for the board codec. Before upload, firmware
@@ -58,7 +59,7 @@ receive HTTP 200 from the protected backend health endpoint. Without it, HTTP
 ESP32-S3 does not support 5 GHz Wi-Fi.
 
 After Wi-Fi connects, a background task synchronizes the clock with SNTP and
-checks `https://pupbox.983457.xyz/api/health`. Serial logs report DNS, secure
+checks `https://pupbox-aws.983457.xyz/api/health`. Serial logs report DNS, secure
 connection, first-byte, upload, STT, reply buffering, underrun, and total
 timings without logging credentials, transcripts, replies, or response
 bodies. TCP buffers are enlarged for the high-latency VPS connection, and

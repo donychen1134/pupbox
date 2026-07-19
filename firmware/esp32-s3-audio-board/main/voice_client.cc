@@ -59,13 +59,16 @@ struct ClientState {
     size_t audio_bytes = 0;
     size_t audio_chunks = 0;
     size_t audio_underruns = 0;
+    int64_t audio_underrun_ms = 0;
     int64_t request_started_us = 0;
+    int64_t producer_finished_us = 0;
     int64_t first_audio_us = 0;
     int64_t playback_started_us = 0;
     int64_t playback_finished_us = 0;
     int64_t last_audio_us = 0;
     int64_t max_audio_gap_ms = 0;
     int64_t write_ms = 0;
+    char tts_cache[16] = {};
     esp_err_t error = ESP_OK;
 };
 
@@ -75,6 +78,15 @@ StaticStreamBuffer_t playback_buffer_control;
 
 int64_t ElapsedMs(int64_t started_us, int64_t finished_us) {
     return (finished_us - started_us) / 1000;
+}
+
+void SetPlaybackError(PlaybackMetrics* metrics, esp_err_t error) {
+    if (metrics == nullptr || error == ESP_OK) {
+        return;
+    }
+    std::snprintf(metrics->playback_error,
+                  sizeof(metrics->playback_error), "%s",
+                  esp_err_to_name(error));
 }
 
 void WriteLE16(uint8_t* output, uint16_t value) {
@@ -152,6 +164,11 @@ esp_err_t ProcessSpeechLine(ClientState* current) {
     if (!cJSON_IsString(type) || type->valuestring == nullptr) {
         cJSON_Delete(root);
         return ESP_ERR_INVALID_RESPONSE;
+    }
+    cJSON* cache = cJSON_GetObjectItemCaseSensitive(root, "cache");
+    if (cJSON_IsString(cache) && cache->valuestring != nullptr) {
+        std::snprintf(current->tts_cache, sizeof(current->tts_cache), "%s",
+                      cache->valuestring);
     }
     if (std::strcmp(type->valuestring, "done") == 0) {
         current->stream_done = true;
@@ -253,6 +270,7 @@ void PlaybackTask(void* argument) {
     }
 
     while (current->error == ESP_OK && current->output_started) {
+        const int64_t receive_started_us = esp_timer_get_time();
         const size_t received = xStreamBufferReceive(
             current->playback_buffer, chunk, sizeof(chunk),
             pdMS_TO_TICKS(100));
@@ -262,6 +280,8 @@ void PlaybackTask(void* argument) {
                 break;
             }
             ++current->audio_underruns;
+            current->audio_underrun_ms +=
+                ElapsedMs(receive_started_us, esp_timer_get_time());
             continue;
         }
         if (received % sizeof(int16_t) != 0) {
@@ -369,6 +389,7 @@ esp_err_t UploadVoiceRecording(const int16_t* samples, size_t sample_count,
         access_token[0] == '\0' || response == nullptr) {
         return ESP_ERR_INVALID_ARG;
     }
+    const int64_t turn_started_us = esp_timer_get_time();
     constexpr char prefix_format[] =
         "--%s\r\nContent-Disposition: form-data; name=\"audio\"; "
         "filename=\"recording.wav\"\r\nContent-Type: audio/wav\r\n\r\n";
@@ -444,6 +465,8 @@ esp_err_t UploadVoiceRecording(const int16_t* samples, size_t sample_count,
         return ESP_ERR_INVALID_RESPONSE;
     }
     *response = {};
+    response->turn_started_us = turn_started_us;
+    response->client_response_ms = client_total_ms;
     CopyJSONString(root, "trace_id", response->trace_id,
                    sizeof(response->trace_id));
     CopyJSONString(root, "reply", response->reply, sizeof(response->reply));
@@ -470,11 +493,12 @@ esp_err_t UploadVoiceRecording(const int16_t* samples, size_t sample_count,
 
 esp_err_t StreamVoiceReply(const VoiceReply& response,
                            const char* access_token, AudioBoard* audio,
-                           int output_volume) {
+                           int output_volume, PlaybackMetrics* metrics) {
     if (response.reply[0] == '\0' || access_token == nullptr ||
-        access_token[0] == '\0' || audio == nullptr) {
+        access_token[0] == '\0' || audio == nullptr || metrics == nullptr) {
         return ESP_ERR_INVALID_ARG;
     }
+    *metrics = {};
     cJSON* request = cJSON_CreateObject();
     if (request == nullptr ||
         !cJSON_AddStringToObject(request, "text", response.reply)) {
@@ -484,6 +508,7 @@ esp_err_t StreamVoiceReply(const VoiceReply& response,
     char* request_json = cJSON_PrintUnformatted(request);
     cJSON_Delete(request);
     if (request_json == nullptr) {
+        SetPlaybackError(metrics, ESP_ERR_NO_MEM);
         return ESP_ERR_NO_MEM;
     }
     auto* line = static_cast<char*>(heap_caps_malloc(
@@ -497,13 +522,14 @@ esp_err_t StreamVoiceReply(const VoiceReply& response,
         heap_caps_free(line);
         heap_caps_free(decoded_audio);
         heap_caps_free(playback_storage);
+        SetPlaybackError(metrics, ESP_ERR_NO_MEM);
         return ESP_ERR_NO_MEM;
     }
 
+    state = {};
     esp_err_t result = ConfigureRequest(kBackendSpeechStreamURL,
                                         "application/json", access_token);
     if (result == ESP_OK) {
-        state = {};
         state.mode = ResponseMode::kSpeechStream;
         state.line = line;
         state.line_capacity = kStreamLineCapacity;
@@ -535,6 +561,7 @@ esp_err_t StreamVoiceReply(const VoiceReply& response,
             state.error = ProcessSpeechLine(&state);
         }
     }
+    state.producer_finished_us = esp_timer_get_time();
     state.producer_done = true;
     if (state.playback_task_started) {
         if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(120000)) == 0 &&
@@ -545,6 +572,28 @@ esp_err_t StreamVoiceReply(const VoiceReply& response,
     const int status =
         client == nullptr ? 0 : esp_http_client_get_status_code(client);
     const int64_t finished_us = esp_timer_get_time();
+    metrics->tts_first_audio_ms =
+        state.first_audio_us == 0
+            ? 0
+            : ElapsedMs(state.request_started_us, state.first_audio_us);
+    metrics->tts_ms =
+        state.producer_finished_us == 0
+            ? 0
+            : ElapsedMs(state.request_started_us,
+                        state.producer_finished_us);
+    metrics->playback_ms =
+        state.playback_started_us == 0 || state.playback_finished_us == 0
+            ? 0
+            : ElapsedMs(state.playback_started_us,
+                        state.playback_finished_us);
+    metrics->turn_total_ms =
+        response.turn_started_us == 0
+            ? 0
+            : ElapsedMs(response.turn_started_us, finished_us);
+    metrics->audio_underruns = state.audio_underruns;
+    metrics->audio_underrun_ms = state.audio_underrun_ms;
+    std::snprintf(metrics->tts_cache, sizeof(metrics->tts_cache), "%s",
+                  state.tts_cache);
     cJSON_free(request_json);
     heap_caps_free(line);
     heap_caps_free(decoded_audio);
@@ -554,13 +603,17 @@ esp_err_t StreamVoiceReply(const VoiceReply& response,
     heap_caps_free(playback_storage);
     if (result != ESP_OK || state.error != ESP_OK || status != HttpStatus_Ok ||
         !state.stream_done || state.audio_bytes == 0) {
+        const esp_err_t playback_error =
+            result != ESP_OK
+                ? result
+                : (state.error != ESP_OK ? state.error
+                                         : ESP_ERR_INVALID_RESPONSE);
+        SetPlaybackError(metrics, playback_error);
         ESP_LOGE(kTag,
                  "speech stream failed: transport=%s state=%s HTTP=%d done=%d audio=%u",
                  esp_err_to_name(result), esp_err_to_name(state.error), status,
                  state.stream_done, static_cast<unsigned>(state.audio_bytes));
-        return result != ESP_OK ? result
-                                : (state.error != ESP_OK ? state.error
-                                                        : ESP_ERR_INVALID_RESPONSE);
+        return playback_error;
     }
     ESP_LOGI(kTag,
              "speech playback finished: first_audio=%lld ms playback=%lld ms audio=%u bytes chunks=%u write=%lld ms max_gap=%lld ms underruns=%u total=%lld ms",
@@ -571,5 +624,73 @@ esp_err_t StreamVoiceReply(const VoiceReply& response,
              state.max_audio_gap_ms,
              static_cast<unsigned>(state.audio_underruns),
              ElapsedMs(state.request_started_us, finished_us));
+    return ESP_OK;
+}
+
+esp_err_t ReportTurnMetrics(const VoiceReply& response,
+                            const PlaybackMetrics& metrics,
+                            const char* access_token) {
+    if (response.trace_id[0] == '\0' || access_token == nullptr ||
+        access_token[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    cJSON* request = cJSON_CreateObject();
+    if (request == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+    bool ok = cJSON_AddStringToObject(request, "trace_id", response.trace_id) &&
+              cJSON_AddNumberToObject(request, "voice_response_ms",
+                                     response.client_response_ms) &&
+              cJSON_AddNumberToObject(request, "tts_first_audio_ms",
+                                     metrics.tts_first_audio_ms) &&
+              cJSON_AddNumberToObject(request, "tts_ms", metrics.tts_ms) &&
+              cJSON_AddNumberToObject(request, "playback_ms",
+                                     metrics.playback_ms) &&
+              cJSON_AddNumberToObject(request, "turn_total_ms",
+                                     metrics.turn_total_ms) &&
+              cJSON_AddNumberToObject(request, "audio_underruns",
+                                     metrics.audio_underruns) &&
+              cJSON_AddNumberToObject(request, "audio_underrun_ms",
+                                     metrics.audio_underrun_ms) &&
+              cJSON_AddStringToObject(request, "tts_cache",
+                                     metrics.tts_cache) &&
+              cJSON_AddStringToObject(request, "playback_error",
+                                     metrics.playback_error);
+    char* request_json = ok ? cJSON_PrintUnformatted(request) : nullptr;
+    cJSON_Delete(request);
+    if (request_json == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    char response_body[256] = {};
+    state = {};
+    esp_err_t result = ConfigureRequest(kBackendTurnMetricsURL,
+                                        "application/json", access_token);
+    if (result == ESP_OK) {
+        state.mode = ResponseMode::kJSON;
+        state.response = response_body;
+        state.response_capacity = sizeof(response_body);
+        result = esp_http_client_set_post_field(
+            client, request_json, static_cast<int>(std::strlen(request_json)));
+        if (result == ESP_OK) {
+            result = esp_http_client_perform(client);
+        }
+    }
+    const int status =
+        client == nullptr ? 0 : esp_http_client_get_status_code(client);
+    cJSON_free(request_json);
+    if (result != ESP_OK || state.error != ESP_OK || status != HttpStatus_Ok) {
+        ESP_LOGW(kTag,
+                 "turn metrics failed: transport=%s state=%s HTTP=%d",
+                 esp_err_to_name(result), esp_err_to_name(state.error), status);
+        return result != ESP_OK ? result
+                                : (state.error != ESP_OK ? state.error
+                                                        : ESP_ERR_INVALID_RESPONSE);
+    }
+    ESP_LOGI(kTag,
+             "turn metrics reported: response=%lld first_audio=%lld playback=%lld total=%lld underruns=%lld",
+             response.client_response_ms, metrics.tts_first_audio_ms,
+             metrics.playback_ms, metrics.turn_total_ms,
+             metrics.audio_underruns);
     return ESP_OK;
 }
