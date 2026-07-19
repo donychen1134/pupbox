@@ -234,6 +234,10 @@ func ClarificationReply(text string, history []Turn) (string, bool) {
 	}
 	previousTurn := history[len(history)-1]
 	previous := strings.TrimSpace(previousTurn.Reply)
+	if previousTurn.ActivityID == "clap" && LooksLikeToddlerBabble(previousTurn.User) && len(history) > 1 {
+		previousTurn = history[len(history)-2]
+		previous = strings.TrimSpace(previousTurn.Reply)
+	}
 	if containsAny(previous, "豆豆说简单一点", "豆豆刚才") && len(history) > 1 {
 		previousTurn = history[len(history)-2]
 		previous = strings.TrimSpace(previousTurn.Reply)

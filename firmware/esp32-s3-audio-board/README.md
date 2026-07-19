@@ -20,6 +20,11 @@ The current bench prototype supports a complete cloud conversation:
    Inactivity and the turn limit play a short descending rest cue before exit.
    Every individual recording stops after at most eight seconds.
 
+A bright cue means the microphone has started listening. A short descending
+double tone means speech capture has ended and the board is processing the
+reply. The longer, softer descending cue means the conversation has gone to
+sleep.
+
 The microphone remains at 24 kHz for the board codec. Before upload, firmware
 resamples speech to 16 kHz mono PCM to reduce request size by one third. TTS
 PCM remains at 24 kHz for playback quality. The reply client buffers slow

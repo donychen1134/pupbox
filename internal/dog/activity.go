@@ -261,6 +261,9 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if activity, ok := continueRecentActivity(normalized, history); ok {
 		return activity, true
 	}
+	if LooksLikeToddlerBabble(normalized) && recentReplyInvitesContext(history) {
+		return Activity{}, false
+	}
 	if activity, ok := PlanActivity(text); ok {
 		if activity.ID == "clap" && hasRecentCountingRejection(history) {
 			return fixedActivity("clap", "汪汪，豆豆记得不数数啦。你想学小猫，还是学小狗叫？")
@@ -283,6 +286,14 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 		}
 	}
 	return Activity{}, false
+}
+
+func recentReplyInvitesContext(history []Turn) bool {
+	if len(history) == 0 {
+		return false
+	}
+	reply := history[len(history)-1].Reply
+	return containsAny(reply, "？", "?", "还是", "你猜", "要不要", "好不好")
 }
 
 func hasRecentCountingRejection(history []Turn) bool {

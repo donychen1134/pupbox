@@ -490,6 +490,25 @@ func TestBabbleRemembersRecentCountingRejection(t *testing.T) {
 	}
 }
 
+func TestBabbleDefersToOpenConversationContext(t *testing.T) {
+	history := []Turn{{
+		User:       "在草丛",
+		Reply:      "豆豆在看草丛呢。你猜小兔子穿花衣服，还是蓝衣服呀？",
+		ActivityID: "surprise_animal",
+	}}
+	if activity, ok := PlanActivityWithHistory("嗯", history); ok {
+		t.Fatalf("contextual babble was intercepted by activity %#v", activity)
+	}
+}
+
+func TestBabbleStillUsesLocalReplyWithoutOpenContext(t *testing.T) {
+	history := []Turn{{User: "你好", Reply: "豆豆在这里陪你。"}}
+	activity, ok := PlanActivityWithHistory("嗯", history)
+	if !ok || activity.ID != "clap" {
+		t.Fatalf("activity = %#v ok=%v, want local babble reply", activity, ok)
+	}
+}
+
 func TestSceneSurpriseNeedsEstablishedSceneAndInvitesEasyReply(t *testing.T) {
 	history := []Turn{
 		{User: "我们骑小毛驴", Reply: "小毛驴出发啦。"},
@@ -574,5 +593,16 @@ func TestClarificationReplyDoesNotTreatAnimalChatAsStory(t *testing.T) {
 	got, ok := ClarificationReply("你说啥呢？", history)
 	if !ok || !strings.Contains(got, "学小鸭子叫") || strings.Contains(got, "小故事") {
 		t.Fatalf("clarification = %q ok=%v", got, ok)
+	}
+}
+
+func TestClarificationReplySkipsGenericBabbleReply(t *testing.T) {
+	history := []Turn{
+		{User: "在草丛", Reply: "豆豆在看草丛呢。你猜是小兔子还是小猫？", ActivityID: "surprise_animal"},
+		{User: "嗯", Reply: "嗯嗯，豆豆也嗯嗯。", ActivityID: "clap"},
+	}
+	got, ok := ClarificationReply("你好像没听懂我在说啥", history)
+	if !ok || !strings.Contains(got, "草丛") || strings.Contains(got, "嗯嗯") {
+		t.Fatalf("clarification = %q ok=%v, want previous scene", got, ok)
 	}
 }

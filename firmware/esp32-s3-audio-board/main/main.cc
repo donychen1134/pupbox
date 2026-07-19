@@ -124,6 +124,29 @@ esp_err_t PlayListeningCue(AudioBoard& audio, int output_volume) {
     return audio.SetOutputEnabled(false);
 }
 
+esp_err_t PlayCaptureCompleteCue(AudioBoard& audio, int output_volume) {
+    constexpr size_t kCueFrames = 6;
+    constexpr int32_t kCueAmplitude = 1700;
+    int16_t samples[kChunkSamples];
+
+    ESP_RETURN_ON_ERROR(audio.SetOutputEnabled(true), kTag,
+                        "enable capture complete cue");
+    ESP_RETURN_ON_ERROR(audio.SetOutputVolume(output_volume), kTag,
+                        "set capture complete cue volume");
+    for (size_t frame = 0; frame < kCueFrames; ++frame) {
+        const int32_t period = frame < kCueFrames / 2 ? 40 : 56;
+        for (size_t index = 0; index < kChunkSamples; ++index) {
+            const int32_t phase = static_cast<int32_t>(
+                (frame * kChunkSamples + index) % period);
+            samples[index] = phase < period / 2 ? kCueAmplitude
+                                                : -kCueAmplitude;
+        }
+        ESP_RETURN_ON_ERROR(audio.Write(samples, kChunkSamples), kTag,
+                            "write capture complete cue");
+    }
+    return audio.SetOutputEnabled(false);
+}
+
 esp_err_t PlaySessionEndCue(AudioBoard& audio, int output_volume) {
     constexpr size_t kToneFrames = 6;
     constexpr size_t kSilenceFrames = 3;
@@ -425,6 +448,7 @@ extern "C" void app_main() {
             ESP_LOGI(kTag, "K2 hold detected; push-to-talk recording ended");
         }
 
+        ESP_ERROR_CHECK(PlayCaptureCompleteCue(audio, output_volume));
         VoiceReply reply = {};
         if (!RunVoiceTurn(audio, recording, recorded_samples,
                           output_volume, &reply)) {
