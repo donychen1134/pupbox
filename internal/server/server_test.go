@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/donychen1134/pupbox/internal/dog"
 )
 
 func TestAccessTokenDisabledByDefault(t *testing.T) {
@@ -489,6 +491,25 @@ func TestTurnMetricsUpdatesPersistedConversation(t *testing.T) {
 	}
 	if event.TTSCache != "miss" {
 		t.Fatalf("tts cache = %q, want miss", event.TTSCache)
+	}
+}
+
+func TestSceneSurprisesAreDisabledByDefault(t *testing.T) {
+	history := []dog.Turn{
+		{User: "我们骑小马", Reply: "小马出发啦。"},
+		{User: "跑上山坡", Reply: "山坡上有好多花。"},
+		{User: "继续走", Reply: "前面还有一片森林。"},
+	}
+	srv := New(Config{})
+	_, _, _, source, _ := srv.reply(context.Background(), "继续", history)
+	if strings.HasPrefix(source, "activity:surprise_") {
+		t.Fatalf("surprise source = %q while disabled", source)
+	}
+
+	enabled := New(Config{EnableSurprises: true})
+	_, _, _, source, _ = enabled.reply(context.Background(), "继续", history)
+	if !strings.HasPrefix(source, "activity:surprise_") {
+		t.Fatalf("source = %q, want opt-in surprise", source)
 	}
 }
 

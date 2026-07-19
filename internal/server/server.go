@@ -31,6 +31,7 @@ type Server struct {
 	voice       VoiceProvider
 	useChat     bool
 	useVoice    bool
+	useSurprise bool
 	staticDir   string
 	accessToken string
 	events      *EventStore
@@ -97,6 +98,7 @@ type Config struct {
 	RecordingDir     string
 	RecordingLimit   int
 	TrimSTTSilence   bool
+	EnableSurprises  bool
 	SpeechCacheDir   string
 	SpeechCacheLimit int
 	Logger           *slog.Logger
@@ -133,6 +135,7 @@ func New(cfg Config) *Server {
 		voice:       voice,
 		useChat:     chatEnabled(cfg.Chat, forceMock),
 		useVoice:    voice != nil && voice.Available() && !forceMock,
+		useSurprise: cfg.EnableSurprises,
 		staticDir:   cfg.StaticDir,
 		accessToken: strings.TrimSpace(cfg.AccessToken),
 		events:      events,
@@ -773,9 +776,11 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
 		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 	}
-	if activity, ok := dog.PlanSceneSurprise(text, history); ok {
-		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
-		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
+	if s.useSurprise {
+		if activity, ok := dog.PlanSceneSurprise(text, history); ok {
+			activity.Reply = dog.SpeechOnlyReply(activity.Reply)
+			return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
+		}
 	}
 
 	if s.useChat {

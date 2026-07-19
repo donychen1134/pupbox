@@ -97,6 +97,8 @@ PUPBOX_TTS_CACHE_DIR=/var/lib/pupbox/tts-cache
 PUPBOX_TTS_CACHE_LIMIT=512
 PUPBOX_TTS_PREWARM=true
 PUPBOX_TTS_PREWARM_LIMIT=192
+# Keep experimental scene surprises off until core games are stable.
+PUPBOX_SURPRISE_ENABLED=false
 # Optional parent-only diagnostic playback. Keep short retention.
 PUPBOX_RECORDING_DIR=/var/lib/pupbox/recordings
 PUPBOX_RECORDING_LIMIT=20

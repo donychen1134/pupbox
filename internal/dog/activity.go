@@ -192,7 +192,8 @@ func PlanActivity(text string) (Activity, bool) {
 	case isFarewellIntent(normalized):
 		return byID("farewell")
 	case containsAny(normalized, "你还会干啥", "你还会干什么", "你还会做什么", "你会做什么", "你会干啥", "你会干什么", "你能做什么", "你能干啥", "可以玩什么", "有什么好玩", "都会什么") ||
-		equalsAny(normalized, "怎么玩", "玩什么", "干什么", "做什么"):
+		containsAny(normalized, "其他游戏", "其它游戏", "别的游戏", "玩个游戏", "玩一个游戏", "我们玩游戏", "玩游戏吧") ||
+		equalsAny(normalized, "怎么玩", "玩什么", "玩游戏", "游戏", "干什么", "做什么"):
 		return byID("guide")
 	case containsAny(normalized, "背唐诗", "背古诗", "念唐诗", "念古诗", "读唐诗", "读古诗", "来首唐诗", "来一首唐诗") ||
 		equalsAny(normalized, "唐诗", "古诗", "背诗"):
@@ -203,14 +204,14 @@ func PlanActivity(text string) (Activity, bool) {
 	case (utf8.RuneCountInString(normalized) <= 12 && containsAny(normalized, "你在干什么", "你在干啥", "你干什么呢", "你干啥呢", "你干嘛呢")) ||
 		equalsAny(normalized, "你干什么", "你干啥", "你干嘛", "干啥呢"):
 		return byID("presence")
-	case containsAny(normalized, "你好你好", "豆豆你好", "小狗你好", "狗狗你好") ||
+	case containsAny(normalized, "你好你好", "豆豆你好", "你好豆豆", "你好呀豆豆", "小狗你好", "狗狗你好") ||
 		equalsAny(normalized, "你好", "你好呀", "你好啊", "嗨", "哈喽"):
 		return byID("greeting")
 	case containsAny(normalized, "一起聊天", "和你聊天", "聊一会", "聊会儿") ||
 		equalsAny(normalized, "聊天", "聊聊", "说话", "陪我聊聊"):
 		return byID("chat")
-	case containsAny(normalized, "猜动物", "猜小动物", "动物游戏", "猜谜语", "猜个谜") ||
-		equalsAny(normalized, "动物", "小动物", "猜谜", "谜语"):
+	case containsAny(normalized, "猜动物", "猜小动物", "动物游戏", "动物的游戏", "开动物", "猜猜游戏", "猜谜语", "猜个谜", "你先想个动物", "你说一种动物", "你出一种动物", "我来猜动物", "你出题我来猜") ||
+		equalsAny(normalized, "动物", "动物呀", "小动物", "猜谜", "谜语"):
 		return byID("animal_guess")
 	case containsAny(normalized, "数数", "数一数", "一起数", "数数字", "叔叔游戏", "玩叔叔的游戏") ||
 		equalsAny(normalized, "数字", "一二三", "123"):
@@ -247,7 +248,8 @@ func PlanActivity(text string) (Activity, bool) {
 
 // PlanActivityWithHistory resolves short follow-ups that only make sense after a previous turn.
 func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
-	normalized := stripDogAddress(normalizeToddlerIntentText(text))
+	rawNormalized := normalizeToddlerIntentText(text)
+	normalized := stripDogAddress(rawNormalized)
 	if containsAny(normalized, "听不懂", "听不清", "听不见", "没听见", "不清楚", "有点卡", "太卡", "卡住") {
 		return Activity{}, false
 	}
@@ -258,10 +260,13 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if hasPendingCountingOffer(history) && isCountingAcceptance(normalized) {
 		return byID("counting")
 	}
+	if hasPendingAnimalOffer(history) && isActivityAcceptance(normalized) {
+		return byID("animal_guess")
+	}
 	if isStoryAffirmation(normalized) && (hasPendingStoryOffer(history) || hasRecentActivity(history, "story")) {
 		return activityWithHistory("story", history)
 	}
-	if activity, ok := continueRecentActivity(normalized, history); ok {
+	if activity, ok := continueRecentActivity(rawNormalized, history); ok {
 		return activity, true
 	}
 	if LooksLikeToddlerBabble(normalized) && recentReplyInvitesContext(history) {
@@ -411,6 +416,18 @@ func isCountingAcceptance(text string) bool {
 	return containsAny(text, "数数", "叔叔") || equalsAny(text, "好", "好呀", "好啊", "好的", "可以", "要", "要玩", "嗯", "嗯嗯")
 }
 
+func hasPendingAnimalOffer(history []Turn) bool {
+	if len(history) == 0 {
+		return false
+	}
+	reply := normalizeToddlerIntentText(history[len(history)-1].Reply)
+	return containsAny(reply, "猜动物", "猜个小动物") && containsAny(reply, "吗", "好不好", "想先玩哪个", "故事还是", "还是猜动物")
+}
+
+func isActivityAcceptance(text string) bool {
+	return equalsAny(text, "好", "好呀", "好啊", "好的", "可以", "要", "要玩", "嗯", "嗯嗯")
+}
+
 func continueNurseryRhyme(text string) (Activity, bool) {
 	replies := activityContinuationReplies["nursery_rhyme"]
 	switch {
@@ -521,13 +538,13 @@ type animalGuessRound struct {
 
 var animalGuessRounds = []animalGuessRound{
 	{clue: "长耳朵", answer: "小兔子", aliases: []string{"兔子", "小兔", "兔兔"}, prompt: "长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子，还是小鸭子？"},
-	{clue: "圆圆脸", answer: "小猫头鹰", aliases: []string{"猫头鹰"}, prompt: "圆圆脸，大眼睛，夜里醒来咕咕叫。是小猫头鹰，还是小绵羊？"},
-	{clue: "背着小房子", answer: "小蜗牛", aliases: []string{"蜗牛"}, prompt: "背着小房子，走路慢慢的。是小蜗牛，还是小松鼠？"},
-	{clue: "鼻子长长", answer: "大象", aliases: []string{"大象", "象"}, prompt: "鼻子长长，耳朵大大，还会用鼻子喷水。是大象，还是斑马？"},
-	{clue: "穿着黑白衣", answer: "企鹅", aliases: []string{"企鹅"}, prompt: "穿着黑白衣，走路摇摇摆摆，喜欢冰冰的地方。是企鹅，还是小猴子？"},
-	{clue: "尾巴像把小伞", answer: "小松鼠", aliases: []string{"松鼠"}, prompt: "尾巴像把小伞，爱抱着松果爬树。是小松鼠，还是小河马？"},
-	{clue: "脖子长长", answer: "长颈鹿", aliases: []string{"长颈鹿"}, prompt: "脖子长长，能吃到高高的树叶。是长颈鹿，还是小兔子？"},
-	{clue: "身上有黑白条纹", answer: "斑马", aliases: []string{"斑马"}, prompt: "身上有黑白条纹，跑起来很快。是斑马，还是小花猫？"},
+	{clue: "会喵喵叫", answer: "小猫", aliases: []string{"小猫", "猫咪", "猫猫"}, prompt: "会喵喵叫，脸上有胡子。是小猫，还是小狗？"},
+	{clue: "会汪汪叫", answer: "小狗", aliases: []string{"小狗", "狗狗", "狗"}, prompt: "会汪汪叫，喜欢和人做朋友。是小狗，还是小猫？"},
+	{clue: "会嘎嘎叫", answer: "小鸭子", aliases: []string{"鸭子", "小鸭", "鸭鸭"}, prompt: "会嘎嘎叫，喜欢在水里游。是小鸭子，还是小兔子？"},
+	{clue: "鼻子长长", answer: "大象", aliases: []string{"大象", "象"}, prompt: "鼻子长长，耳朵大大。是大象，还是小猴子？"},
+	{clue: "爱吃香蕉", answer: "小猴子", aliases: []string{"猴子", "小猴", "猴猴"}, prompt: "爱吃香蕉，会爬树。是小猴子，还是小鱼？"},
+	{clue: "住在水里", answer: "小鱼", aliases: []string{"小鱼", "鱼儿", "鱼"}, prompt: "住在水里，用尾巴游泳。是小鱼，还是小鸟？"},
+	{clue: "有翅膀", answer: "小鸟", aliases: []string{"小鸟", "鸟儿", "鸟"}, prompt: "有翅膀，会叽叽喳喳叫。是小鸟，还是小鱼？"},
 }
 
 func continueAnimalGuess(text, previousReply string) (Activity, bool) {
@@ -539,7 +556,7 @@ func continueAnimalGuess(text, previousReply string) (Activity, bool) {
 		if matchesShortChoice(text, round.aliases...) {
 			return fixedActivity("animal_guess", "猜对啦，就是"+round.answer+"！下一题："+next.prompt)
 		}
-		if utf8.RuneCountInString(text) <= 8 && containsAny(text, "兔", "鸭", "猫", "羊", "蜗牛", "松鼠", "大象", "斑马", "企鹅", "猴", "河马", "长颈鹿") {
+		if utf8.RuneCountInString(text) <= 8 && containsAny(text, "兔", "鸭", "猫", "狗", "大象", "猴", "鱼", "鸟") {
 			return fixedActivity("animal_guess", "差一点，这题是"+round.answer+"。下一题："+next.prompt)
 		}
 		if utf8.RuneCountInString(text) <= 10 {
@@ -708,13 +725,13 @@ func babbleActivities() []Activity {
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "豆豆听见这个声音啦。",
+			Reply:    "豆豆听见啦。想玩数数，还是猜动物？",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "哇，豆豆也想和你说话。",
+			Reply:    "嗯，豆豆在这里。你可以说，讲故事，或者猜动物。",
 			Category: "chat",
 		},
 		{
@@ -785,26 +802,33 @@ func PrewarmReplies() []string {
 			appendReply(reply)
 		}
 	}
-	for _, id := range []string{"nursery_rhyme", "adventure", "pretend_play", "magic", "animal_guess", "color_hunt"} {
+	for _, id := range []string{"nursery_rhyme", "adventure", "pretend_play", "magic", "color_hunt"} {
 		for _, reply := range activityContinuationReplies[id] {
 			appendReply(reply)
 		}
 	}
+	for _, id := range []string{"animal_guess", "counting"} {
+		for _, reply := range activityReplyVariants[id] {
+			appendReply(reply)
+		}
+	}
+	for index, round := range animalGuessRounds {
+		next := animalGuessRounds[(index+1)%len(animalGuessRounds)]
+		appendReply("猜对啦，就是" + round.answer + "！下一题：" + next.prompt)
+	}
+	for index, round := range countingRounds {
+		next := countingRounds[(index+1)%len(countingRounds)]
+		answer := countingNumberWords[round.answer]
+		appendReply("答对啦，是" + answer + "个！下一题：" + next.prompt)
+	}
 	for _, id := range []string{
 		"poem",
-		"animal_guess",
 		"color_hunt",
-		"counting",
 		"sound_game",
 		"clap",
 		"comfort",
 	} {
 		for _, reply := range activityReplyVariants[id] {
-			appendReply(reply)
-		}
-	}
-	for _, scene := range surpriseScenes {
-		for _, reply := range scene.cards {
 			appendReply(reply)
 		}
 	}
@@ -867,16 +891,6 @@ var activityContinuationReplies = map[string][]string{
 		"蓝泡泡飞起来，里面装着一小片天空。啪，它变成蓝色小雨。",
 		"粉泡泡飞起来，轻轻落在小花上。小花穿上粉色裙子啦。",
 	},
-	"animal_guess": {
-		"下一只会喵喵叫，胡子长长。是小猫还是小狗？",
-		"下一只鼻子长长，耳朵大大。是大象还是斑马？",
-		"下一只穿黑白衣，走路摇摆。是企鹅还是猴子？",
-		"下一只脖子长长，能吃高树叶。是长颈鹿还是小兔？",
-		"下一只尾巴像小伞，爱抱松果。是松鼠还是河马？",
-		"下一只背着小房子，走得慢慢的。是蜗牛还是小鸭？",
-		"下一只身上有黑白条纹，跑得很快。是斑马还是小猫？",
-		"下一只长耳朵，蹦蹦跳。是小兔还是小鸭？",
-	},
 	"color_hunt": {
 		"找到啦，真厉害。下一次找一个圆圆的东西。",
 	},
@@ -886,7 +900,7 @@ var activityReplyVariants = map[string][]string{
 	"guide": {
 		"豆豆会讲故事、猜动物，还会陪你过家家。你想先玩哪个？",
 		"我们可以去想象旅行、变魔法，或者唱一首小童谣。你选一个吧。",
-		"豆豆会数数、找颜色，还会学小动物叫。你想玩哪一个？",
+		"豆豆会数数、猜颜色，还会学小动物叫。你想玩哪一个？",
 		"想安静一点，可以听故事。想一起玩，可以猜动物或过家家。",
 		"豆豆今天准备了故事、魔法和小火车旅行。你说一个，马上开始。",
 		"你可以说讲故事、唱童谣，也可以直接和豆豆聊天。",
@@ -953,13 +967,13 @@ var activityReplyVariants = map[string][]string{
 	},
 	"animal_guess": {
 		"豆豆来出题，你来猜：长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子，还是小鸭子？",
-		"圆圆脸，大眼睛，夜里醒来咕咕叫。是小猫头鹰，还是小绵羊？",
-		"背着小房子，走路慢慢的。是小蜗牛，还是小松鼠？",
-		"鼻子长长，耳朵大大，还会用鼻子喷水。是大象，还是斑马？",
-		"穿着黑白衣，走路摇摇摆摆，喜欢冰冰的地方。是企鹅，还是小猴子？",
-		"尾巴像把小伞，爱抱着松果爬树。是小松鼠，还是小河马？",
-		"脖子长长，能吃到高高的树叶。是长颈鹿，还是小兔子？",
-		"身上有黑白条纹，跑起来很快。是斑马，还是小花猫？",
+		"豆豆来出题，你来猜：会喵喵叫，脸上有胡子。是小猫，还是小狗？",
+		"豆豆来出题，你来猜：会汪汪叫，喜欢和人做朋友。是小狗，还是小猫？",
+		"豆豆来出题，你来猜：会嘎嘎叫，喜欢在水里游。是小鸭子，还是小兔子？",
+		"豆豆来出题，你来猜：鼻子长长，耳朵大大。是大象，还是小猴子？",
+		"豆豆来出题，你来猜：爱吃香蕉，会爬树。是小猴子，还是小鱼？",
+		"豆豆来出题，你来猜：住在水里，用尾巴游泳。是小鱼，还是小鸟？",
+		"豆豆来出题，你来猜：有翅膀，会叽叽喳喳叫。是小鸟，还是小鱼？",
 	},
 	"color_hunt": {
 		"我们找红色。看到红色就拍拍手，豆豆也一起拍。",

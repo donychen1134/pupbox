@@ -156,7 +156,7 @@ hardware: hold `K2` to record, release it to play back, and use `K1`/`K3` to
 adjust volume. See [firmware/esp32-s3-audio-board/README.md](firmware/esp32-s3-audio-board/README.md)
 for the toolchain, button layout, flashing, and recovery procedure.
 
-The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. After at least three established scene turns, a reviewed surprise card may advance animal, travel, food, bubble, or magic play. Surprise cards have a three-turn cooldown, stay within the recent scene, and end with a sound or two-option prompt that a toddler can answer with one word. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
+The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. Reviewed surprise cards are disabled by default while core game routing is stabilized; set `PUPBOX_SURPRISE_ENABLED=true` only for focused parent testing. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 
 ## OpenAI Settings
 

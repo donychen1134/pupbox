@@ -96,6 +96,12 @@ func TestPlanActivityNormalizesToddlerIntentText(t *testing.T) {
 		{text: "我们坐火车去旅行", id: "adventure"},
 		{text: "豆豆一起过家家", id: "pretend_play"},
 		{text: "玩魔法变变变", id: "magic"},
+		{text: "你还会玩儿其他游戏吗", id: "guide"},
+		{text: "我们玩个游戏吧", id: "guide"},
+		{text: "开动物的游戏", id: "animal_guess"},
+		{text: "你先想个动物，我来猜", id: "animal_guess"},
+		{text: "你好呀豆豆", id: "greeting"},
+		{text: "你说一种动物我来猜", id: "animal_guess"},
 	}
 	for _, tt := range tests {
 		got, ok := PlanActivity(tt.text)
@@ -132,7 +138,6 @@ func TestPlanActivityLeavesNaturalConversationForModel(t *testing.T) {
 		"我画了一辆红色汽车",
 		"妈妈今天回家了",
 		"我写了一首诗",
-		"你好豆豆",
 	} {
 		if activity, ok := PlanActivity(text); ok {
 			t.Errorf("PlanActivity(%q) = %#v, want model routing", text, activity)
@@ -347,7 +352,7 @@ func TestPretendAndMagicContinueShortChoices(t *testing.T) {
 func TestAnimalGuessContinuesWithNextRound(t *testing.T) {
 	history := []Turn{{User: "猜动物", Reply: activityReplyVariants["animal_guess"][0], ActivityID: "animal_guess"}}
 	activity, ok := PlanActivityWithHistory("小兔子", history)
-	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, "小猫头鹰") || !strings.Contains(activity.Reply, "小绵羊") {
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, "小猫") || !strings.Contains(activity.Reply, "小狗") {
 		t.Fatalf("animal continuation = %#v ok=%v", activity, ok)
 	}
 }
@@ -359,6 +364,26 @@ func TestEveryAnimalGuessRoundAcceptsItsAnswer(t *testing.T) {
 		if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, round.answer) {
 			t.Errorf("round %d answer %q = %#v ok=%v", index, round.aliases[0], activity, ok)
 		}
+	}
+}
+
+func TestAnimalGuessUsesFamiliarAnimals(t *testing.T) {
+	want := []string{"小兔子", "小猫", "小狗", "小鸭子", "大象", "小猴子", "小鱼", "小鸟"}
+	if len(animalGuessRounds) != len(want) {
+		t.Fatalf("animal rounds = %d, want %d", len(animalGuessRounds), len(want))
+	}
+	for index, answer := range want {
+		if animalGuessRounds[index].answer != answer {
+			t.Errorf("round %d answer = %q, want %q", index, animalGuessRounds[index].answer, answer)
+		}
+	}
+}
+
+func TestAnimalOfferAffirmationStartsChildGuessing(t *testing.T) {
+	history := []Turn{{User: "你好", Reply: "豆豆会讲故事、猜动物。你想先玩哪个？", ActivityID: "greeting"}}
+	activity, ok := PlanActivityWithHistory("嗯", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "你来猜") {
+		t.Fatalf("animal offer affirmation = %#v ok=%v", activity, ok)
 	}
 }
 
@@ -504,8 +529,8 @@ func TestPrewarmRepliesAreUniqueAndCoverReviewedActivities(t *testing.T) {
 	}
 	for _, scene := range surpriseScenes {
 		for _, reply := range scene.cards {
-			if !seen[reply] {
-				t.Fatalf("prewarm replies do not include %s surprise %q", scene.id, reply)
+			if seen[reply] {
+				t.Fatalf("disabled %s surprise was unnecessarily prewarmed: %q", scene.id, reply)
 			}
 		}
 	}
@@ -534,6 +559,14 @@ func TestBabbleActivitiesAllHaveReplies(t *testing.T) {
 	for _, activity := range babbleActivities() {
 		if activity.Reply == "" {
 			t.Fatalf("activity %q has empty reply: %#v", activity.ID, activity)
+		}
+	}
+}
+
+func TestBabbleActivitiesAvoidEmptyConversationFiller(t *testing.T) {
+	for _, activity := range babbleActivities() {
+		if strings.Contains(activity.Reply, "豆豆也想和你说话") {
+			t.Fatalf("generic filler remains in babble reply: %q", activity.Reply)
 		}
 	}
 }
