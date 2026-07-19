@@ -59,16 +59,16 @@ func Activities() []Activity {
 		},
 		{
 			ID:       "animal_guess",
-			Label:    "动物",
-			Prompt:   "豆豆猜动物",
-			Reply:    "豆豆来猜动物：长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子。",
+			Label:    "猜动物",
+			Prompt:   "和豆豆猜动物",
+			Reply:    "豆豆来出题，你来猜：长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子，还是小鸭子？",
 			Category: "game",
 			Action:   "ear_wiggle",
 		},
 		{
 			ID:       "color_hunt",
-			Label:    "颜色",
-			Prompt:   "豆豆玩颜色",
+			Label:    "猜颜色",
+			Prompt:   "豆豆猜颜色",
 			Reply:    "我们找红色。看到红色就拍拍手，豆豆也一起拍。",
 			Category: "game",
 			Action:   "glow_red",
@@ -431,33 +431,38 @@ func continueMagic(text string) (Activity, bool) {
 	return Activity{}, false
 }
 
+type animalGuessRound struct {
+	clue    string
+	answer  string
+	aliases []string
+	prompt  string
+}
+
+var animalGuessRounds = []animalGuessRound{
+	{clue: "长耳朵", answer: "小兔子", aliases: []string{"兔子", "小兔", "兔兔"}, prompt: "长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子，还是小鸭子？"},
+	{clue: "圆圆脸", answer: "小猫头鹰", aliases: []string{"猫头鹰"}, prompt: "圆圆脸，大眼睛，夜里醒来咕咕叫。是小猫头鹰，还是小绵羊？"},
+	{clue: "背着小房子", answer: "小蜗牛", aliases: []string{"蜗牛"}, prompt: "背着小房子，走路慢慢的。是小蜗牛，还是小松鼠？"},
+	{clue: "鼻子长长", answer: "大象", aliases: []string{"大象", "象"}, prompt: "鼻子长长，耳朵大大，还会用鼻子喷水。是大象，还是斑马？"},
+	{clue: "穿着黑白衣", answer: "企鹅", aliases: []string{"企鹅"}, prompt: "穿着黑白衣，走路摇摇摆摆，喜欢冰冰的地方。是企鹅，还是小猴子？"},
+	{clue: "尾巴像把小伞", answer: "小松鼠", aliases: []string{"松鼠"}, prompt: "尾巴像把小伞，爱抱着松果爬树。是小松鼠，还是小河马？"},
+	{clue: "脖子长长", answer: "长颈鹿", aliases: []string{"长颈鹿"}, prompt: "脖子长长，能吃到高高的树叶。是长颈鹿，还是小兔子？"},
+	{clue: "身上有黑白条纹", answer: "斑马", aliases: []string{"斑马"}, prompt: "身上有黑白条纹，跑起来很快。是斑马，还是小花猫？"},
+}
+
 func continueAnimalGuess(text, previousReply string) (Activity, bool) {
-	type animalRound struct {
-		clue    string
-		answer  string
-		aliases []string
-		reply   string
-	}
-	replies := activityContinuationReplies["animal_guess"]
-	rounds := []animalRound{
-		{clue: "长耳朵", answer: "小兔子", aliases: []string{"兔", "小兔"}, reply: replies[0]},
-		{clue: "圆圆脸", answer: "小猫头鹰", aliases: []string{"猫头鹰"}, reply: replies[1]},
-		{clue: "小房子", answer: "小蜗牛", aliases: []string{"蜗牛"}, reply: replies[2]},
-		{clue: "鼻子长长", answer: "大象", aliases: []string{"大象"}, reply: replies[3]},
-		{clue: "黑白衣", answer: "企鹅", aliases: []string{"企鹅"}, reply: replies[4]},
-		{clue: "小伞", answer: "小松鼠", aliases: []string{"松鼠"}, reply: replies[5]},
-		{clue: "脖子长长", answer: "长颈鹿", aliases: []string{"长颈鹿"}, reply: replies[6]},
-		{clue: "黑白条纹", answer: "斑马", aliases: []string{"斑马"}, reply: replies[7]},
-	}
-	for _, round := range rounds {
+	for index, round := range animalGuessRounds {
 		if !strings.Contains(previousReply, round.clue) {
 			continue
 		}
+		next := animalGuessRounds[(index+1)%len(animalGuessRounds)]
 		if matchesShortChoice(text, round.aliases...) {
-			return fixedActivity("animal_guess", "猜对啦，是"+round.answer+"。"+round.reply)
+			return fixedActivity("animal_guess", "猜对啦，就是"+round.answer+"！下一题："+next.prompt)
 		}
-		if utf8.RuneCountInString(text) <= 6 && containsAny(text, "兔", "鸭", "猫", "羊", "蜗牛", "松鼠", "大象", "斑马", "企鹅", "猴", "河马", "长颈鹿") {
-			return fixedActivity("animal_guess", "这次是"+round.answer+"。"+round.reply)
+		if utf8.RuneCountInString(text) <= 8 && containsAny(text, "兔", "鸭", "猫", "羊", "蜗牛", "松鼠", "大象", "斑马", "企鹅", "猴", "河马", "长颈鹿") {
+			return fixedActivity("animal_guess", "差一点，这题是"+round.answer+"。下一题："+next.prompt)
+		}
+		if utf8.RuneCountInString(text) <= 10 {
+			return fixedActivity("animal_guess", "豆豆没听清你的答案，再听一次："+round.prompt)
 		}
 	}
 	return Activity{}, false
@@ -866,7 +871,7 @@ var activityReplyVariants = map[string][]string{
 		"两个黄鹂鸣翠柳，一行白鹭上青天。黄黄的小鸟唱歌，白白的鸟飞上天空。",
 	},
 	"animal_guess": {
-		"豆豆来猜动物：长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子，还是小鸭子？",
+		"豆豆来出题，你来猜：长耳朵，蹦蹦跳，爱吃胡萝卜。是小兔子，还是小鸭子？",
 		"圆圆脸，大眼睛，夜里醒来咕咕叫。是小猫头鹰，还是小绵羊？",
 		"背着小房子，走路慢慢的。是小蜗牛，还是小松鼠？",
 		"鼻子长长，耳朵大大，还会用鼻子喷水。是大象，还是斑马？",

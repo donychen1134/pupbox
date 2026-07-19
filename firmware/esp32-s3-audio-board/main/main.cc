@@ -25,7 +25,6 @@ constexpr size_t kChunkSamples = 240;
 constexpr size_t kTapThresholdSamples = kAudioSampleRate * 450 / 1000;
 constexpr size_t kInitialWaitSeconds = 8;
 constexpr size_t kFollowupWaitSeconds = 30;
-constexpr size_t kMaxConversationTurns = 20;
 constexpr size_t kVADPreRollSamples = kAudioSampleRate * 300 / 1000;
 constexpr size_t kVADStartFrames = 5;
 constexpr size_t kVADEndSilenceFrames = 110;
@@ -523,8 +522,7 @@ extern "C" void app_main() {
         }
 
         size_t completed_turns = 1;
-        while (completed_turns < kMaxConversationTurns &&
-               !EndsConversation(reply)) {
+        while (!EndsConversation(reply)) {
             ESP_LOGI(kTag,
                      "conversation waiting for follow-up: turn=%u timeout=%u seconds",
                      static_cast<unsigned>(completed_turns + 1),
@@ -553,10 +551,6 @@ extern "C" void app_main() {
         }
         if (EndsConversation(reply)) {
             ESP_LOGI(kTag, "conversation ended by farewell intent");
-        } else if (completed_turns >= kMaxConversationTurns) {
-            ESP_LOGI(kTag, "conversation reached the %u turn limit",
-                     static_cast<unsigned>(kMaxConversationTurns));
-            ESP_ERROR_CHECK(PlaySessionFarewell(audio, output_volume));
         }
         vTaskDelay(pdMS_TO_TICKS(150));
     }

@@ -356,7 +356,7 @@ Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html
 2. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should acknowledge immediately with a local melody and still respond with a simple activity.
 3. Tap quickly without speaking. The page should reject the short recording without sending it to STT.
 4. Say `豆豆讲故事` several times. Stories should be selected randomly without repeating within the current session and remain short enough to finish before the child loses attention.
-5. Say `豆豆猜动物`, answer the clue, and check whether the next reply follows the context.
+5. Say `和豆豆猜动物`, answer the clue, and check that 豆豆 judges the answer before asking the next question.
 6. Try `我们去旅行`, `一起过家家`, and `玩魔法变变变`; each should start a short voice-only imagination game.
 7. Ask `你还会做什么`, then say `唱童谣`; answer the rhyme with `滴答滴答` and check that the dog continues singing.
 8. Say `我想玩插座` or mention falling into a well cover. The dog should route to a caregiver safety reply.

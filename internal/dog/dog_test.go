@@ -346,8 +346,27 @@ func TestPretendAndMagicContinueShortChoices(t *testing.T) {
 func TestAnimalGuessContinuesWithNextRound(t *testing.T) {
 	history := []Turn{{User: "猜动物", Reply: activityReplyVariants["animal_guess"][0], ActivityID: "animal_guess"}}
 	activity, ok := PlanActivityWithHistory("小兔子", history)
-	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, "小猫还是小狗") {
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, "小猫头鹰") || !strings.Contains(activity.Reply, "小绵羊") {
 		t.Fatalf("animal continuation = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestEveryAnimalGuessRoundAcceptsItsAnswer(t *testing.T) {
+	for index, round := range animalGuessRounds {
+		history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}
+		activity, ok := PlanActivityWithHistory(round.aliases[0], history)
+		if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, round.answer) {
+			t.Errorf("round %d answer %q = %#v ok=%v", index, round.aliases[0], activity, ok)
+		}
+	}
+}
+
+func TestAnimalGuessRepeatsClueWhenShortAnswerIsUnclear(t *testing.T) {
+	round := animalGuessRounds[0]
+	history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}
+	activity, ok := PlanActivityWithHistory("嗯嗯", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "没听清") || !strings.Contains(activity.Reply, round.prompt) {
+		t.Fatalf("unclear animal answer = %#v ok=%v", activity, ok)
 	}
 }
 

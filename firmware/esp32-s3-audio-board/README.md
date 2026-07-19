@@ -16,14 +16,14 @@ The current bench prototype supports a complete cloud conversation:
 6. After a successful reply, the board plays another cue and listens for a
    follow-up without another button press. The first turn waits eight seconds;
    follow-ups wait 30 seconds. Press `K2` while listening to end the session.
-7. A session also ends after a farewell reply, a failed turn, or 20 turns.
-   Inactivity and the turn limit play a short descending rest cue before exit.
+7. A session also ends after a farewell reply, a failed turn, or inactivity.
+   Inactivity plays a spoken goodbye before exit.
    Every individual recording stops after at most eight seconds.
 
 A bright cue means the microphone has started listening. A short descending
 double tone means speech capture has ended and the board is processing the
-reply. Nursery-rhyme activities start with a short toy melody. After inactivity
-or the turn limit, the board says goodbye; if the network is unavailable, it
+reply. Nursery-rhyme activities start with a short toy melody. After inactivity,
+the board says goodbye; if the network is unavailable, it
 falls back to the longer, softer descending sleep cue.
 
 Each new `K2` conversation creates a fresh backend session. Automatic follow-up
