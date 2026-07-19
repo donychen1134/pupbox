@@ -71,6 +71,10 @@ type ChatProvider interface {
 	CreateResponse(ctx context.Context, instructions, input string) (string, error)
 }
 
+type StructuredChatProvider interface {
+	CreateStructuredResponse(ctx context.Context, instructions, input string) (string, error)
+}
+
 type VoiceProvider interface {
 	Available() bool
 	Name() string
@@ -784,6 +788,28 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 	}
 
 	if s.useChat {
+		if structured, ok := s.chat.(StructuredChatProvider); ok {
+			raw, err := structured.CreateStructuredResponse(ctx, dog.RoutingInstructions(), contextualInput(history, text))
+			if err != nil {
+				fallback := dog.SpeechOnlyReply(dog.MockReply(text))
+				return fallback, safety, nil, "mock_fallback", err
+			}
+			route, err := dog.ParseSemanticRoute(raw)
+			if err != nil {
+				fallback := dog.SpeechOnlyReply(dog.MockReply(text))
+				return fallback, safety, nil, "mock_fallback", fmt.Errorf("parse semantic route %q: %w", truncateText(raw, 300), err)
+			}
+			if route.Kind == "activity" {
+				activity, found := dog.RoutedActivity(route.ActivityID, history)
+				if !found {
+					fallback := dog.SpeechOnlyReply(dog.MockReply(text))
+					return fallback, safety, nil, "mock_fallback", fmt.Errorf("unsupported routed activity %q", route.ActivityID)
+				}
+				activity.Reply = dog.SpeechOnlyReply(activity.Reply)
+				return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
+			}
+			return dog.SpeechOnlyReply(dog.ClampReply(route.Reply, 90)), safety, nil, s.chat.Name(), nil
+		}
 		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), contextualInput(history, text))
 		if err != nil {
 			fallback := dog.SpeechOnlyReply(dog.MockReply(text))

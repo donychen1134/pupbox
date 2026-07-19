@@ -113,6 +113,14 @@ func (c *Client) StreamSampleRate() int {
 }
 
 func (c *Client) CreateResponse(ctx context.Context, instructions, input string) (string, error) {
+	return c.createResponse(ctx, instructions, input, false)
+}
+
+func (c *Client) CreateStructuredResponse(ctx context.Context, instructions, input string) (string, error) {
+	return c.createResponse(ctx, instructions, input, true)
+}
+
+func (c *Client) createResponse(ctx context.Context, instructions, input string, structured bool) (string, error) {
 	if !c.Available() {
 		return "", errors.New("dashscope api key is not configured")
 	}
@@ -132,6 +140,10 @@ func (c *Client) CreateResponse(ctx context.Context, instructions, input string)
 		"messages":    messages,
 		"temperature": chatTemperature(c.chatModel),
 		"max_tokens":  180,
+	}
+	if structured {
+		payload["response_format"] = map[string]string{"type": "json_object"}
+		payload["temperature"] = 0.2
 	}
 
 	var body bytes.Buffer

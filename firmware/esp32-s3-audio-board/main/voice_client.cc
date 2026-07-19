@@ -29,6 +29,7 @@ constexpr size_t kStreamLineCapacity = 20 * 1024;
 constexpr size_t kDecodedAudioCapacity = 12 * 1024;
 constexpr size_t kPlaybackBufferCapacity = 3 * 1024 * 1024;
 constexpr size_t kPlaybackPrebufferBytes = 72 * 1024;
+constexpr size_t kPlaybackRebufferBytes = 48 * 1024;
 constexpr size_t kPlaybackChunkBytes = 960;
 constexpr int64_t kMinimumStreamingBytesPerSecond = 60 * 1024;
 constexpr int kVoiceTimeoutMs = 60000;
@@ -281,8 +282,13 @@ void PlaybackTask(void* argument) {
                 break;
             }
             ++current->audio_underruns;
-            current->audio_underrun_ms +=
-                ElapsedMs(receive_started_us, esp_timer_get_time());
+            while (!current->producer_done &&
+                   xStreamBufferBytesAvailable(current->playback_buffer) <
+                       kPlaybackRebufferBytes) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            current->audio_underrun_ms += ElapsedMs(
+                receive_started_us, esp_timer_get_time());
             continue;
         }
         if (received % sizeof(int16_t) != 0) {

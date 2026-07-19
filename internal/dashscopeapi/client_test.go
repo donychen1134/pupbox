@@ -51,6 +51,36 @@ func TestCharacterModelUsesRolePlayTemperature(t *testing.T) {
 	}
 }
 
+func TestCreateStructuredResponseRequestsJSONObject(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		format, ok := payload["response_format"].(map[string]any)
+		if !ok || format["type"] != "json_object" {
+			t.Errorf("response_format = %#v, want json_object", payload["response_format"])
+		}
+		if payload["temperature"] != float64(0.2) {
+			t.Errorf("temperature = %#v, want 0.2", payload["temperature"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"kind\":\"activity\",\"activity_id\":\"animal_guess\",\"reply\":\"\"}"}}]}`))
+	}))
+	defer upstream.Close()
+
+	client := New(Config{APIKey: "test-key", BaseURL: upstream.URL})
+	got, err := client.CreateStructuredResponse(context.Background(), "route", "input")
+	if err != nil {
+		t.Fatalf("CreateStructuredResponse: %v", err)
+	}
+	if !strings.Contains(got, `"activity_id":"animal_guess"`) {
+		t.Fatalf("response = %q", got)
+	}
+}
+
 func TestParseSpeechRate(t *testing.T) {
 	t.Parallel()
 

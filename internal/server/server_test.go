@@ -683,6 +683,68 @@ func TestChatKeepsExplicitActivityOutOfModel(t *testing.T) {
 	}
 }
 
+func TestChatUsesSemanticActivityRouteWithoutSecondModelCall(t *testing.T) {
+	chat := &structuredCapturingChatProvider{
+		response: `{"kind":"activity","activity_id":"animal_guess","reply":""}`,
+	}
+	srv := New(Config{Chat: chat})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat?tts=off", strings.NewReader(`{"text":"来一个你说样子我回答的玩法"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+
+	var response chatResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Source != "activity:animal_guess" || response.Activity == nil || response.Activity.ID != "animal_guess" {
+		t.Fatalf("source=%q activity=%#v, want semantic animal activity", response.Source, response.Activity)
+	}
+	if chat.structuredCalls != 1 || chat.plainCalls != 0 {
+		t.Fatalf("model calls structured=%d plain=%d, want 1 and 0", chat.structuredCalls, chat.plainCalls)
+	}
+}
+
+func TestChatUsesReplyFromSameSemanticRouteCall(t *testing.T) {
+	chat := &structuredCapturingChatProvider{
+		response: `{"kind":"chat","activity_id":"","reply":"云朵像软软的棉花糖。"}`,
+	}
+	srv := New(Config{Chat: chat})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat?tts=off", strings.NewReader(`{"text":"云朵像什么"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+
+	var response chatResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Source != "test-structured-chat" || response.Reply != "云朵像软软的棉花糖。" {
+		t.Fatalf("source=%q reply=%q", response.Source, response.Reply)
+	}
+	if chat.structuredCalls != 1 || chat.plainCalls != 0 {
+		t.Fatalf("model calls structured=%d plain=%d, want 1 and 0", chat.structuredCalls, chat.plainCalls)
+	}
+}
+
+type structuredCapturingChatProvider struct {
+	response        string
+	structuredCalls int
+	plainCalls      int
+}
+
+func (p *structuredCapturingChatProvider) Available() bool   { return true }
+func (p *structuredCapturingChatProvider) Name() string      { return "test-structured-chat" }
+func (p *structuredCapturingChatProvider) ChatModel() string { return "test-model" }
+func (p *structuredCapturingChatProvider) CreateResponse(_ context.Context, _, _ string) (string, error) {
+	p.plainCalls++
+	return "unexpected plain response", nil
+}
+func (p *structuredCapturingChatProvider) CreateStructuredResponse(_ context.Context, _, _ string) (string, error) {
+	p.structuredCalls++
+	return p.response, nil
+}
+
 type capturingChatProvider struct {
 	mu     sync.Mutex
 	inputs []string
