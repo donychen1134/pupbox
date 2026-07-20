@@ -147,6 +147,33 @@ esp_err_t PlayCaptureCompleteCue(AudioBoard& audio, int output_volume) {
     return audio.SetOutputEnabled(false);
 }
 
+esp_err_t PlayVolumeCue(AudioBoard& audio, int output_volume) {
+    constexpr size_t kCueFrames = 7;
+    constexpr int32_t kCueAmplitude = 4200;
+    constexpr int32_t kCuePeriodSamples = 48;
+    int16_t samples[kChunkSamples];
+
+    ESP_RETURN_ON_ERROR(audio.SetOutputEnabled(true), kTag,
+                        "enable volume cue");
+    ESP_RETURN_ON_ERROR(audio.SetOutputVolume(output_volume), kTag,
+                        "set volume cue volume");
+    for (size_t frame = 0; frame < kCueFrames; ++frame) {
+        for (size_t index = 0; index < kChunkSamples; ++index) {
+            const int32_t phase = static_cast<int32_t>(
+                (frame * kChunkSamples + index) % kCuePeriodSamples);
+            const int32_t triangle = phase < kCuePeriodSamples / 2
+                                         ? phase
+                                         : kCuePeriodSamples - phase;
+            samples[index] = static_cast<int16_t>(
+                -kCueAmplitude +
+                triangle * (kCueAmplitude * 4 / kCuePeriodSamples));
+        }
+        ESP_RETURN_ON_ERROR(audio.Write(samples, kChunkSamples), kTag,
+                            "write volume cue");
+    }
+    return audio.SetOutputEnabled(false);
+}
+
 esp_err_t PlayNurseryMelody(AudioBoard& audio, int output_volume) {
     constexpr int32_t kNotePeriods[] = {46, 41, 36, 46, 46, 41, 36, 31};
     constexpr size_t kFramesPerNote = 12;
@@ -461,12 +488,14 @@ extern "C" void app_main() {
         if (ButtonPressed(audio, kVolumeUpButtonPin)) {
             output_volume = std::min(100, output_volume + kOutputVolumeStep);
             ESP_LOGI(kTag, "output volume: %d", output_volume);
+            ESP_ERROR_CHECK(PlayVolumeCue(audio, output_volume));
             WaitForButtonRelease(audio, kVolumeUpButtonPin);
             continue;
         }
         if (ButtonPressed(audio, kVolumeDownButtonPin)) {
             output_volume = std::max(0, output_volume - kOutputVolumeStep);
             ESP_LOGI(kTag, "output volume: %d", output_volume);
+            ESP_ERROR_CHECK(PlayVolumeCue(audio, output_volume));
             WaitForButtonRelease(audio, kVolumeDownButtonPin);
             continue;
         }

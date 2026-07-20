@@ -4,7 +4,7 @@
 
 constexpr int kAudioSampleRate = 24000;
 constexpr int kVoiceUploadSampleRate = 16000;
-constexpr int kInitialOutputVolume = 50;
+constexpr int kInitialOutputVolume = 80;
 constexpr int kOutputVolumeStep = 10;
 
 constexpr char kBackendHost[] = "pupbox-aws.983457.xyz";

@@ -369,8 +369,8 @@ func continueCounting(text, previousReply string) (Activity, bool) {
 		if looksLikeCountingAnswer(text) {
 			return fixedActivity("counting", "差一点，这题是"+answer+"个。下一题："+next.prompt)
 		}
-		if utf8.RuneCountInString(text) <= 10 {
-			return fixedActivity("counting", "豆豆没听清数字，再听一次："+round.prompt)
+		if isUncertainGameAnswer(text) {
+			return fixedActivity("counting", "你可以说一个数字。再听一次："+round.prompt)
 		}
 	}
 	return Activity{}, false
@@ -543,7 +543,7 @@ var animalGuessRounds = []animalGuessRound{
 	{clue: "会嘎嘎叫", answer: "小鸭子", aliases: []string{"鸭子", "小鸭", "鸭鸭"}, prompt: "会嘎嘎叫，喜欢在水里游。是小鸭子，还是小兔子？"},
 	{clue: "鼻子长长", answer: "大象", aliases: []string{"大象", "象"}, prompt: "鼻子长长，耳朵大大。是大象，还是小猴子？"},
 	{clue: "爱吃香蕉", answer: "小猴子", aliases: []string{"猴子", "小猴", "猴猴"}, prompt: "爱吃香蕉，会爬树。是小猴子，还是小鱼？"},
-	{clue: "住在水里", answer: "小鱼", aliases: []string{"小鱼", "鱼儿", "鱼"}, prompt: "住在水里，用尾巴游泳。是小鱼，还是小鸟？"},
+	{clue: "住在水里", answer: "小鱼", aliases: []string{"小鱼", "鱼儿", "鱼", "小姨", "小于"}, prompt: "住在水里，用尾巴游泳。是小鱼，还是小鸟？"},
 	{clue: "有翅膀", answer: "小鸟", aliases: []string{"小鸟", "鸟儿", "鸟"}, prompt: "有翅膀，会叽叽喳喳叫。是小鸟，还是小鱼？"},
 }
 
@@ -559,11 +559,17 @@ func continueAnimalGuess(text, previousReply string) (Activity, bool) {
 		if utf8.RuneCountInString(text) <= 8 && containsAny(text, "兔", "鸭", "猫", "狗", "大象", "猴", "鱼", "鸟") {
 			return fixedActivity("animal_guess", "差一点，这题是"+round.answer+"。下一题："+next.prompt)
 		}
-		if utf8.RuneCountInString(text) <= 10 {
-			return fixedActivity("animal_guess", "豆豆没听清你的答案，再听一次："+round.prompt)
+		if isUncertainGameAnswer(text) {
+			return fixedActivity("animal_guess", "你可以猜一个。再听一次："+round.prompt)
 		}
 	}
 	return Activity{}, false
+}
+
+func isUncertainGameAnswer(text string) bool {
+	normalized := stripDogAddress(normalizeToddlerIntentText(text))
+	return LooksLikeToddlerBabble(normalized) ||
+		equalsAny(normalized, "好", "好的", "不知道", "不晓得", "什么", "猜不到", "不会", "叔叔", "数数", "再说一遍", "再讲一遍")
 }
 
 func fixedActivity(id, reply string) (Activity, bool) {

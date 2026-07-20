@@ -391,8 +391,35 @@ func TestAnimalGuessRepeatsClueWhenShortAnswerIsUnclear(t *testing.T) {
 	round := animalGuessRounds[0]
 	history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}
 	activity, ok := PlanActivityWithHistory("嗯嗯", history)
-	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "没听清") || !strings.Contains(activity.Reply, round.prompt) {
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "你可以猜一个") || !strings.Contains(activity.Reply, round.prompt) {
 		t.Fatalf("unclear animal answer = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestAnimalGuessAllowsClearTopicSwitch(t *testing.T) {
+	round := animalGuessRounds[0]
+	history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}
+	activity, ok := PlanActivityWithHistory("要不讲个故事吧", history)
+	if !ok || activity.ID != "story" {
+		t.Fatalf("animal topic switch = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestAnimalGuessDoesNotTreatClearSpeechAsUnheard(t *testing.T) {
+	round := animalGuessRounds[0]
+	history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}
+	activity, ok := PlanActivityWithHistory("我拿了一个气球", history)
+	if ok {
+		t.Fatalf("clear unrelated speech should use model, got %#v", activity)
+	}
+}
+
+func TestAnimalGuessAcceptsFishHomophone(t *testing.T) {
+	round := animalGuessRounds[6]
+	history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}
+	activity, ok := PlanActivityWithHistory("小姨", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "猜对啦") || !strings.Contains(activity.Reply, "小鱼") {
+		t.Fatalf("fish homophone = %#v ok=%v", activity, ok)
 	}
 }
 
@@ -427,7 +454,7 @@ func TestCountingRepeatsQuestionAfterUnclearAnswer(t *testing.T) {
 	round := countingRounds[0]
 	history := []Turn{{User: "玩数数", Reply: round.prompt, ActivityID: "counting"}}
 	activity, ok := PlanActivityWithHistory("叔叔", history)
-	if !ok || activity.ID != "counting" || !strings.Contains(activity.Reply, "没听清数字") || !strings.Contains(activity.Reply, round.prompt) {
+	if !ok || activity.ID != "counting" || !strings.Contains(activity.Reply, "你可以说一个数字") || !strings.Contains(activity.Reply, round.prompt) {
 		t.Fatalf("unclear counting answer = %#v ok=%v", activity, ok)
 	}
 }
