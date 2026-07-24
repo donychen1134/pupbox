@@ -348,6 +348,59 @@ Routine smoke tests use `tts=off` so they do not spend TTS quota.
 
 TTS responses are cached by provider, model, voice, format, speed, and exact reply text. `PUPBOX_TTS_CACHE_DIR` keeps generated audio across service restarts; files use hashed names, directory mode `0700`, and file mode `0600`. On startup, Pupbox warms the first `PUPBOX_TTS_PREWARM_LIMIT` reviewed replies in the background. Set `PUPBOX_TTS_PREWARM=false` to disable provider calls during startup.
 
+## Private Recording Replay
+
+`pupbox-replay` exports recent protected diagnostic recordings into a private
+local corpus and replays them through `POST /api/voice?tts=off`. This exercises
+upload parsing, silence trimming, STT, session context, activity routing,
+safety, and model replies without spending TTS quota.
+
+Keep the access token in the environment:
+
+```bash
+export PUPBOX_ACCESS_TOKEN=<existing-server-token>
+```
+
+Collect up to 50 recent voice recordings:
+
+```bash
+go run ./cmd/pupbox-replay collect \
+  --server https://pupbox.example.com \
+  --limit 50
+```
+
+The default corpus location is outside the repository:
+
+```text
+~/.local/share/pupbox/replay/<timestamp>/
+  corpus.json
+  manifest.jsonl
+  audio/
+```
+
+The server intentionally does not persist session IDs. Collection therefore
+sorts recordings chronologically and starts a synthetic session after a
+five-minute gap. Review and edit `session` and `order` in `manifest.jsonl` when
+an exact conversation boundary matters. Only turns marked `good` or `too_long`
+inherit their original route as an expected route. A turn marked `missed` is
+flagged for manual review, while unrated turns are reported as baseline changes
+without treating the old behavior as correct.
+
+Replay the corpus against a local or remote Pupbox server:
+
+```bash
+go run ./cmd/pupbox-replay run \
+  --server http://127.0.0.1:8791 \
+  --corpus ~/.local/share/pupbox/replay/<timestamp>
+```
+
+The JSON report includes route comparisons, transcript edit similarity,
+per-turn provider timings, and aggregate P50/P90 latency. Use `--redact-text`
+to omit transcripts and replies from the report. Corpus directories and
+reports use private filesystem permissions, but they still contain sensitive
+family data and must never be committed, uploaded to CI, or placed in a shared
+directory.
+
 ## Parent Validation Checklist
 
 Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html` for child-facing validation.
@@ -391,4 +444,5 @@ Avoid exposed batteries, loose wiring, loose screws, detachable small parts, and
 - Real toddler speech recognition still needs hands-on testing with the child or representative recordings.
 - OpenAI TTS depends on API quota and billing status.
 - Browser speech synthesis in mock mode is only a fallback and may sound poor.
-- The project does not yet persist parent settings or conversation logs.
+- Parent settings and full conversation memory are not persisted; only bounded
+  parent diagnostics and optional short-retention recordings are stored.
