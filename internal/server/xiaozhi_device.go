@@ -108,7 +108,9 @@ func (c *xiaozhiConnection) resolveVolumeCommand(text string) (int, string, bool
 	command := strings.NewReplacer(" ", "", "，", "", ",", "", "。", "", "？", "", "?", "").Replace(text)
 	hasSubject := strings.Contains(command, "声音") || strings.Contains(command, "音量") ||
 		strings.Contains(command, "大声") || strings.Contains(command, "小声")
-	if !hasSubject {
+	standaloneAdjustment := containsExact(command,
+		"大一点", "再大一点", "小一点", "再小一点", "轻一点", "再轻一点", "响一点", "再响一点")
+	if !hasSubject && !standaloneAdjustment {
 		return -1, "", false
 	}
 
@@ -151,6 +153,15 @@ func clampDeviceVolume(volume int) int {
 func containsAny(text string, values ...string) bool {
 	for _, value := range values {
 		if strings.Contains(text, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExact(text string, values ...string) bool {
+	for _, value := range values {
+		if text == value {
 			return true
 		}
 	}

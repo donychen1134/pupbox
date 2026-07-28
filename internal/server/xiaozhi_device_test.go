@@ -18,6 +18,7 @@ func TestResolveVolumeCommand(t *testing.T) {
 		{name: "too quiet", text: "音量太小了", wantVolume: 65, wantMatch: true},
 		{name: "absolute", text: "把音量调到80", wantVolume: 80, wantMatch: true},
 		{name: "capability", text: "你能调整声音大小吗", wantVolume: -1, wantMatch: true},
+		{name: "standalone quieter", text: "轻一点", wantVolume: 35, wantMatch: true},
 		{name: "unrelated size", text: "这个苹果大一点", wantVolume: -1, wantMatch: false},
 	}
 	for _, test := range tests {
