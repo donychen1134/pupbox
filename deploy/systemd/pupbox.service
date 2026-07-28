@@ -1,0 +1,27 @@
+[Unit]
+Description=Pupbox voice backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pupbox
+Group=pupbox
+WorkingDirectory=/opt/pupbox
+EnvironmentFile=/etc/pupbox/pupbox.env
+ExecStart=/opt/pupbox/pupbox-server
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pupbox
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

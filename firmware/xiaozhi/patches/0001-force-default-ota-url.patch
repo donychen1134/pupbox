@@ -1,0 +1,39 @@
+diff --git a/main/Kconfig.projbuild b/main/Kconfig.projbuild
+index a1bb6e3..69e0f4f 100644
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -6,6 +6,13 @@ config OTA_URL
+     help
+         The application will access this URL to check for new firmwares and server address.
+
++config FORCE_DEFAULT_OTA_URL
++    bool "Always use the default OTA URL"
++    default n
++    help
++        Ignore an OTA URL saved during Wi-Fi provisioning. This is intended for
++        self-hosted builds that must always use their compiled server address.
++
+ choice
+     prompt "Flash Assets"
+     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
+diff --git a/main/ota.cc b/main/ota.cc
+index bcc0dc5..3b5233d 100644
+--- a/main/ota.cc
++++ b/main/ota.cc
+@@ -44,12 +44,16 @@ Ota::~Ota() {
+ }
+
+ std::string Ota::GetCheckVersionUrl() {
++#if CONFIG_FORCE_DEFAULT_OTA_URL
++    return CONFIG_OTA_URL;
++#else
+     Settings settings("wifi", false);
+     std::string url = settings.GetString("ota_url");
+     if (url.empty()) {
+         url = CONFIG_OTA_URL;
+     }
+     return url;
++#endif
+ }
+
+ std::unique_ptr<Http> Ota::SetupHttp() {

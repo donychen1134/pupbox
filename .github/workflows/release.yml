@@ -59,6 +59,7 @@ jobs:
             cp -R web/static "${package_dir}/web/static"
             cp README.md "${package_dir}/README.md"
             cp -R docs "${package_dir}/docs"
+            cp -R deploy "${package_dir}/deploy"
 
             tar -C build -czf "dist/${package}.tar.gz" "${package}"
           done

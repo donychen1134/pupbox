@@ -4,7 +4,7 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 
 ## Current Features
 
-- Go HTTP backend with no third-party Go dependencies.
+- Go HTTP and WebSocket backend with a small dependency surface.
 - Parent/debug page with newest-first persisted diagnostics and activity buttons.
 - Child-facing `toy.html` mode that simulates a single-button plush toy.
 - Mock mode that runs without an OpenAI API key.
@@ -23,6 +23,8 @@ Pupbox is a Mac-first prototype for a voice-only conversational plush dog. The s
 - End-to-end turn timing persisted by trace ID, including upload, STT, reply, first audio, and playback.
 - ESP32-S3-AUDIO-Board firmware with hardware-verified microphone recording,
   PSRAM buffering, speaker playback, and user-key volume control.
+- Xiaozhi-compatible Opus streaming for continuous server-side VAD, Qwen
+  conversation, and incremental CosyVoice playback.
 
 ## Interaction Model
 
@@ -155,6 +157,12 @@ The first Waveshare ESP32-S3-AUDIO-Board milestone has been verified on real
 hardware: hold `K2` to record, release it to play back, and use `K1`/`K3` to
 adjust volume. See [firmware/esp32-s3-audio-board/README.md](firmware/esp32-s3-audio-board/README.md)
 for the toolchain, button layout, flashing, and recovery procedure.
+
+The next hardware path reuses the Xiaozhi firmware audio stack and connects it
+to Pupbox over WebSocket. See
+[docs/deploy-r2s-xiaozhi.md](docs/deploy-r2s-xiaozhi.md) for the temporary
+OpenWrt deployment, the final Armbian migration, firmware build settings, and
+recovery procedure.
 
 The browser also creates an anonymous per-page session ID. The server keeps at most ten recent turns for 30 minutes, including the active reviewed activity, so follow-ups such as `要听` and `再来一个` can continue naturally. Reviewed surprise cards are disabled by default while core game routing is stabilized; set `PUPBOX_SURPRISE_ENABLED=true` only for focused parent testing. Session context is memory-only and is not written to the JSONL event log or sent to a provider-managed long-term memory service.
 

@@ -37,6 +37,9 @@ func main() {
 		EnableSurprises:  envBool("PUPBOX_SURPRISE_ENABLED", false),
 		SpeechCacheDir:   envDefault("PUPBOX_TTS_CACHE_DIR", "data/tts-cache"),
 		SpeechCacheLimit: envInt("PUPBOX_TTS_CACHE_LIMIT", 512),
+		EnableXiaozhi:    envBool("PUPBOX_XIAOZHI_ENABLED", false),
+		XiaozhiDeviceID:  os.Getenv("PUPBOX_XIAOZHI_DEVICE_ID"),
+		XiaozhiWSURL:     os.Getenv("PUPBOX_XIAOZHI_WS_URL"),
 		Logger:           logger,
 	})
 	runCtx, cancelRun := context.WithCancel(context.Background())

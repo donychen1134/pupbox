@@ -42,6 +42,19 @@ func TestConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestClientCanLimitTCPMaxSegment(t *testing.T) {
+	t.Parallel()
+
+	client := New(Config{TCPMaxSegment: 1200})
+	transport := client.http.Transport.(*http.Transport)
+	if client.tcpMaxSegment != 1200 {
+		t.Fatalf("tcpMaxSegment = %d, want 1200", client.tcpMaxSegment)
+	}
+	if transport.DialContext == nil {
+		t.Fatal("DialContext is nil")
+	}
+}
+
 func TestCharacterModelUsesRolePlayTemperature(t *testing.T) {
 	if got, want := chatTemperature("qwen-plus-character"), 0.92; got != want {
 		t.Fatalf("temperature = %v, want %v", got, want)

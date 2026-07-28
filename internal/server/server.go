@@ -38,6 +38,7 @@ type Server struct {
 	recordings  *RecordingStore
 	trimSTT     bool
 	sessions    *SessionStore
+	xiaozhi     xiaozhiConfig
 	speechMu    sync.Mutex
 	speechCache map[string]cachedSpeech
 	speechDisk  *SpeechDiskCache
@@ -105,6 +106,9 @@ type Config struct {
 	EnableSurprises  bool
 	SpeechCacheDir   string
 	SpeechCacheLimit int
+	EnableXiaozhi    bool
+	XiaozhiDeviceID  string
+	XiaozhiWSURL     string
 	Logger           *slog.Logger
 }
 
@@ -146,6 +150,11 @@ func New(cfg Config) *Server {
 		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
 		trimSTT:     cfg.TrimSTTSilence,
 		sessions:    NewSessionStore(128, 10, 30*time.Minute),
+		xiaozhi: xiaozhiConfig{
+			enabled:  cfg.EnableXiaozhi,
+			deviceID: normalizeDeviceID(cfg.XiaozhiDeviceID),
+			wsURL:    strings.TrimSpace(cfg.XiaozhiWSURL),
+		},
 		speechCache: make(map[string]cachedSpeech),
 		speechDisk:  speechDisk,
 		speechCalls: make(map[string]*speechCall),
@@ -171,6 +180,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/speech-stream", s.requireAccess(s.handleSpeechStream))
 	s.mux.HandleFunc("POST /api/turn-metrics", s.requireAccess(s.handleTurnMetrics))
 	s.mux.HandleFunc("POST /api/voice", s.requireAccess(s.handleVoice))
+	if s.xiaozhi.enabled {
+		s.mux.HandleFunc("GET /xiaozhi/ota/", s.handleXiaozhiOTA)
+		s.mux.HandleFunc("POST /xiaozhi/ota/", s.handleXiaozhiOTA)
+		s.mux.HandleFunc("GET /xiaozhi/v1/", s.handleXiaozhiWebSocket)
+	}
 	s.mux.HandleFunc("/", s.handleStatic)
 }
 
@@ -239,6 +253,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tts_format":        s.modelName("format"),
 		"tts_speed":         s.ttsSpeed(),
 		"tts_streaming":     s.streamingVoiceAvailable(),
+		"xiaozhi_enabled":   s.xiaozhi.enabled,
+		"xiaozhi_ready":     s.xiaozhiReady(),
 		"server_time":       time.Now().Format(time.RFC3339),
 	})
 }

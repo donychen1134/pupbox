@@ -10,70 +10,108 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 type Client struct {
-	apiKey     string
-	baseURL    string
-	http       *http.Client
-	chatModel  string
-	sttModel   string
-	ttsModel   string
-	ttsVoice   string
-	ttsFormat  string
-	ttsPrompt  string
-	ttsSpeed   float64
-	sampleRate int
+	apiKey        string
+	baseURL       string
+	http          *http.Client
+	chatModel     string
+	sttModel      string
+	ttsModel      string
+	ttsVoice      string
+	ttsFormat     string
+	ttsPrompt     string
+	ttsSpeed      float64
+	sampleRate    int
+	forceIPv4     bool
+	tcpMaxSegment int
 }
 
 type Config struct {
-	APIKey     string
-	BaseURL    string
-	ChatModel  string
-	STTModel   string
-	TTSModel   string
-	TTSVoice   string
-	TTSFormat  string
-	TTSPrompt  string
-	TTSSpeed   string
-	SampleRate string
+	APIKey        string
+	BaseURL       string
+	ChatModel     string
+	STTModel      string
+	TTSModel      string
+	TTSVoice      string
+	TTSFormat     string
+	TTSPrompt     string
+	TTSSpeed      string
+	SampleRate    string
+	ForceIPv4     bool
+	TCPMaxSegment int
 }
 
 func NewFromEnv() *Client {
 	return New(Config{
-		APIKey:     envAny("CHAT_ARCHIVE_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
-		BaseURL:    envDefault("PUPBOX_DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com"),
-		ChatModel:  envDefault("PUPBOX_DASHSCOPE_CHAT_MODEL", "qwen-plus-character"),
-		STTModel:   envDefault("PUPBOX_DASHSCOPE_STT_MODEL", "qwen3-asr-flash"),
-		TTSModel:   envDefault("PUPBOX_DASHSCOPE_TTS_MODEL", "cosyvoice-v3-flash"),
-		TTSVoice:   envDefault("PUPBOX_DASHSCOPE_TTS_VOICE", "longhuhu_v3"),
-		TTSFormat:  envDefault("PUPBOX_DASHSCOPE_TTS_FORMAT", envDefault("PUPBOX_TTS_FORMAT", "mp3")),
-		TTSPrompt:  os.Getenv("PUPBOX_DASHSCOPE_TTS_PROMPT"),
-		TTSSpeed:   envDefault("PUPBOX_DASHSCOPE_TTS_SPEED", envDefault("PUPBOX_TTS_SPEED", defaultTTSSpeedString)),
-		SampleRate: envDefault("PUPBOX_DASHSCOPE_TTS_SAMPLE_RATE", "24000"),
+		APIKey:        envAny("CHAT_ARCHIVE_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+		BaseURL:       envDefault("PUPBOX_DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com"),
+		ChatModel:     envDefault("PUPBOX_DASHSCOPE_CHAT_MODEL", "qwen-plus-character"),
+		STTModel:      envDefault("PUPBOX_DASHSCOPE_STT_MODEL", "qwen3-asr-flash"),
+		TTSModel:      envDefault("PUPBOX_DASHSCOPE_TTS_MODEL", "cosyvoice-v3-flash"),
+		TTSVoice:      envDefault("PUPBOX_DASHSCOPE_TTS_VOICE", "longhuhu_v3"),
+		TTSFormat:     envDefault("PUPBOX_DASHSCOPE_TTS_FORMAT", envDefault("PUPBOX_TTS_FORMAT", "mp3")),
+		TTSPrompt:     os.Getenv("PUPBOX_DASHSCOPE_TTS_PROMPT"),
+		TTSSpeed:      envDefault("PUPBOX_DASHSCOPE_TTS_SPEED", envDefault("PUPBOX_TTS_SPEED", defaultTTSSpeedString)),
+		SampleRate:    envDefault("PUPBOX_DASHSCOPE_TTS_SAMPLE_RATE", "24000"),
+		ForceIPv4:     envBool("PUPBOX_DASHSCOPE_FORCE_IPV4", false),
+		TCPMaxSegment: envInt("PUPBOX_DASHSCOPE_TCP_MAX_SEGMENT", 0),
 	})
 }
 
 func New(cfg Config) *Client {
-	return &Client{
-		apiKey:     strings.TrimSpace(cfg.APIKey),
-		baseURL:    strings.TrimRight(envDefaultValue(cfg.BaseURL, "https://dashscope.aliyuncs.com"), "/"),
-		http:       &http.Client{Timeout: 60 * time.Second},
-		chatModel:  envDefaultValue(cfg.ChatModel, "qwen-plus-character"),
-		sttModel:   envDefaultValue(cfg.STTModel, "qwen3-asr-flash"),
-		ttsModel:   envDefaultValue(cfg.TTSModel, "cosyvoice-v3-flash"),
-		ttsVoice:   envDefaultValue(cfg.TTSVoice, "longhuhu_v3"),
-		ttsFormat:  envDefaultValue(cfg.TTSFormat, "mp3"),
-		ttsPrompt:  strings.TrimSpace(cfg.TTSPrompt),
-		ttsSpeed:   parseSpeechRate(envDefaultValue(cfg.TTSSpeed, defaultTTSSpeedString)),
-		sampleRate: parseSampleRate(envDefaultValue(cfg.SampleRate, "24000")),
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	tcpMaxSegment := validTCPMaxSegment(cfg.TCPMaxSegment)
+	if cfg.ForceIPv4 || tcpMaxSegment > 0 {
+		dialer := dashscopeNetDialer(tcpMaxSegment)
+		transport.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+			if cfg.ForceIPv4 {
+				network = "tcp4"
+			}
+			return dialer.DialContext(ctx, network, address)
+		}
 	}
+	return &Client{
+		apiKey:        strings.TrimSpace(cfg.APIKey),
+		baseURL:       strings.TrimRight(envDefaultValue(cfg.BaseURL, "https://dashscope.aliyuncs.com"), "/"),
+		http:          &http.Client{Timeout: 60 * time.Second, Transport: transport},
+		chatModel:     envDefaultValue(cfg.ChatModel, "qwen-plus-character"),
+		sttModel:      envDefaultValue(cfg.STTModel, "qwen3-asr-flash"),
+		ttsModel:      envDefaultValue(cfg.TTSModel, "cosyvoice-v3-flash"),
+		ttsVoice:      envDefaultValue(cfg.TTSVoice, "longhuhu_v3"),
+		ttsFormat:     envDefaultValue(cfg.TTSFormat, "mp3"),
+		ttsPrompt:     strings.TrimSpace(cfg.TTSPrompt),
+		ttsSpeed:      parseSpeechRate(envDefaultValue(cfg.TTSSpeed, defaultTTSSpeedString)),
+		sampleRate:    parseSampleRate(envDefaultValue(cfg.SampleRate, "24000")),
+		forceIPv4:     cfg.ForceIPv4,
+		tcpMaxSegment: tcpMaxSegment,
+	}
+}
+
+func dashscopeNetDialer(tcpMaxSegment int) *net.Dialer {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	if tcpMaxSegment <= 0 {
+		return dialer
+	}
+	dialer.Control = func(_, _ string, raw syscall.RawConn) error {
+		var socketErr error
+		if err := raw.Control(func(fd uintptr) {
+			socketErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, tcpMaxSegment)
+		}); err != nil {
+			return err
+		}
+		return socketErr
+	}
+	return dialer
 }
 
 func (c *Client) Available() bool {
@@ -517,6 +555,37 @@ func envDefaultValue(value, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func validTCPMaxSegment(value int) int {
+	if value < 536 || value > 1460 {
+		return 0
+	}
+	return value
 }
 
 func parseSpeechRate(value string) float64 {
