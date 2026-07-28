@@ -19,6 +19,8 @@ type xiaozhiVoiceProvider interface {
 	StreamTranscribeOpus(
 		ctx context.Context,
 		audio <-chan []byte,
+		sampleRate int,
+		frameDurationMS int,
 		onTranscript func(text, emotion string) error,
 	) error
 	StreamSpeakOpus(ctx context.Context, text string, onPacket func([]byte) error) error
@@ -62,6 +64,7 @@ type xiaozhiConnection struct {
 	sampleRate  int
 	frameMS     int
 	inputFrame  int
+	inputRate   int
 	audio       chan []byte
 	writeMu     sync.Mutex
 	turnMu      sync.Mutex
@@ -147,6 +150,7 @@ func (s *Server) handleXiaozhiWebSocket(w http.ResponseWriter, r *http.Request) 
 		sampleRate: voice.OpusOutputSampleRate(),
 		frameMS:    voice.OpusOutputFrameDuration(),
 		inputFrame: 60,
+		inputRate:  16000,
 		audio:      make(chan []byte, 128),
 	}
 	client.run()
@@ -182,6 +186,9 @@ func (c *xiaozhiConnection) run() {
 	if hello.AudioParams.FrameDuration > 0 {
 		c.inputFrame = hello.AudioParams.FrameDuration
 	}
+	if hello.AudioParams.SampleRate > 0 {
+		c.inputRate = hello.AudioParams.SampleRate
+	}
 	if err := c.writeJSON(map[string]any{
 		"type":       "hello",
 		"transport":  "websocket",
@@ -200,7 +207,13 @@ func (c *xiaozhiConnection) run() {
 
 	asrDone := make(chan error, 1)
 	go func() {
-		asrDone <- c.voice.StreamTranscribeOpus(c.ctx, c.audio, c.handleTranscript)
+		asrDone <- c.voice.StreamTranscribeOpus(
+			c.ctx,
+			c.audio,
+			c.inputRate,
+			c.inputFrame,
+			c.handleTranscript,
+		)
 	}()
 
 	for {

@@ -27,11 +27,14 @@ const (
 	opusOutputFrameMS       = 100
 )
 
-// StreamTranscribeOpus forwards raw 16 kHz mono Opus packets to Qwen realtime
-// ASR. The provider-side VAD calls onTranscript for each completed utterance.
+// StreamTranscribeOpus wraps raw mono Opus packets in a streaming Ogg container
+// for Qwen realtime ASR. The provider-side VAD calls onTranscript for each
+// completed utterance.
 func (c *Client) StreamTranscribeOpus(
 	ctx context.Context,
 	audio <-chan []byte,
+	sampleRate int,
+	frameDurationMS int,
 	onTranscript func(text, emotion string) error,
 ) error {
 	if !c.Available() {
@@ -39,6 +42,12 @@ func (c *Client) StreamTranscribeOpus(
 	}
 	if onTranscript == nil {
 		return errors.New("transcript callback is required")
+	}
+	if sampleRate != 8000 && sampleRate != 16000 {
+		return fmt.Errorf("unsupported realtime Opus sample rate: %d", sampleRate)
+	}
+	if frameDurationMS <= 0 {
+		return errors.New("realtime Opus frame duration is required")
 	}
 
 	endpoint, err := c.realtimeEndpoint()
@@ -70,7 +79,7 @@ func (c *Client) StreamTranscribeOpus(
 		"session": map[string]any{
 			"modalities":         []string{"text"},
 			"input_audio_format": "opus",
-			"sample_rate":        16000,
+			"sample_rate":        sampleRate,
 			"turn_detection": map[string]any{
 				"type":                "server_vad",
 				"threshold":           0.2,
@@ -79,6 +88,13 @@ func (c *Client) StreamTranscribeOpus(
 		},
 	}); err != nil {
 		return fmt.Errorf("configure dashscope realtime ASR: %w", err)
+	}
+
+	ogg := newOggOpusWriter(sampleRate, 1, frameDurationMS)
+	for _, page := range ogg.Headers() {
+		if err := appendRealtimeAudio(conn, page); err != nil {
+			return err
+		}
 	}
 
 	events := make(chan realtimeASREvent, 32)
@@ -122,15 +138,26 @@ func (c *Client) StreamTranscribeOpus(
 			if len(packet) == 0 {
 				continue
 			}
-			if err := conn.WriteJSON(map[string]any{
-				"event_id": realtimeEventID(),
-				"type":     "input_audio_buffer.append",
-				"audio":    base64.StdEncoding.EncodeToString(packet),
-			}); err != nil {
-				return fmt.Errorf("send audio to dashscope realtime ASR: %w", err)
+			page, err := ogg.WritePacket(packet)
+			if err != nil {
+				return err
+			}
+			if err := appendRealtimeAudio(conn, page); err != nil {
+				return err
 			}
 		}
 	}
+}
+
+func appendRealtimeAudio(conn *websocket.Conn, data []byte) error {
+	if err := conn.WriteJSON(map[string]any{
+		"event_id": realtimeEventID(),
+		"type":     "input_audio_buffer.append",
+		"audio":    base64.StdEncoding.EncodeToString(data),
+	}); err != nil {
+		return fmt.Errorf("send audio to dashscope realtime ASR: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) OpusOutputSampleRate() int {

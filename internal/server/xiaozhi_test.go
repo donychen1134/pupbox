@@ -166,6 +166,8 @@ func (*fakeXiaozhiVoice) Speak(context.Context, string) ([]byte, string, error) 
 func (*fakeXiaozhiVoice) StreamTranscribeOpus(
 	ctx context.Context,
 	audio <-chan []byte,
+	_ int,
+	_ int,
 	onTranscript func(string, string) error,
 ) error {
 	select {
