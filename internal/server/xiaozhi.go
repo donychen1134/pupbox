@@ -47,11 +47,12 @@ type xiaozhiClientHello struct {
 }
 
 type xiaozhiDeviceMessage struct {
-	Type      string `json:"type"`
-	State     string `json:"state,omitempty"`
-	Mode      string `json:"mode,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
+	Type      string          `json:"type"`
+	State     string          `json:"state,omitempty"`
+	Mode      string          `json:"mode,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	SessionID string          `json:"session_id,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
 type xiaozhiConnection struct {
@@ -67,7 +68,12 @@ type xiaozhiConnection struct {
 	inputRate   int
 	audio       chan []byte
 	writeMu     sync.Mutex
+	deviceMu    sync.Mutex
 	turnMu      sync.Mutex
+	mcpID       int64
+	statusMCPID int64
+	volume      int
+	volumeKnown bool
 	turnStarted time.Time
 	lastAudioAt time.Time
 	audioBytes  int64
@@ -202,6 +208,7 @@ func (c *xiaozhiConnection) run() {
 	}); err != nil {
 		return
 	}
+	c.requestDeviceStatus()
 	c.server.log.Info("xiaozhi websocket connected", "session_id", c.sessionID)
 	defer c.server.log.Info("xiaozhi websocket disconnected", "session_id", c.sessionID)
 
@@ -245,6 +252,8 @@ func (c *xiaozhiConnection) run() {
 				}
 			case "abort":
 				c.cancelCurrentTurn()
+			case "mcp":
+				c.handleMCPResponse(message.Payload)
 			}
 		}
 
@@ -300,7 +309,21 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 
 	history := c.server.sessions.History(c.sessionID)
 	replyStarted := time.Now()
-	reply, safety, activity, source, chatErr := c.server.reply(turnCtx, text, history)
+	var reply string
+	var safety dog.SafetyResult
+	var activity *dog.Activity
+	var source string
+	var chatErr error
+	if volume, volumeReply, matched := c.resolveVolumeCommand(text); matched {
+		reply, source = volumeReply, "device:volume"
+		if volume >= 0 {
+			if err := c.setDeviceVolume(volume); err != nil {
+				chatErr = err
+			}
+		}
+	} else {
+		reply, safety, activity, source, chatErr = c.server.reply(turnCtx, text, history)
+	}
 	timings.ReplyMS = elapsedMS(replyStarted)
 	reply = dog.SpeechOnlyReply(dog.ClampReply(reply, 100))
 
@@ -321,26 +344,11 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 
 	ttsStarted := time.Now()
 	firstAudioMS := int64(-1)
-	nextPacketAt := time.Time{}
-	ttsErr := c.voice.StreamSpeakOpus(turnCtx, reply, func(packet []byte) error {
-		if !nextPacketAt.IsZero() {
-			timer := time.NewTimer(time.Until(nextPacketAt))
-			defer timer.Stop()
-			select {
-			case <-turnCtx.Done():
-				return turnCtx.Err()
-			case <-timer.C:
-			}
-		}
+	ttsErr := c.streamSpeechOpus(turnCtx, reply, func() {
 		if firstAudioMS < 0 {
 			firstAudioMS = elapsedMS(ttsStarted)
 			timings.VoiceResponseMS = elapsedMS(replyStarted)
 		}
-		if err := c.writeBinary(packet); err != nil {
-			return err
-		}
-		nextPacketAt = time.Now().Add(time.Duration(c.frameMS) * time.Millisecond)
-		return nil
 	})
 	timings.TTSMS = elapsedMS(ttsStarted)
 	timings.TTSFirstAudioMS = max(firstAudioMS, 0)

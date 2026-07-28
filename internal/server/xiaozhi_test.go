@@ -125,6 +125,118 @@ func TestXiaozhiOTAAndVoiceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestXiaozhiVolumeCommandUsesMCP(t *testing.T) {
+	const deviceID = "02:00:00:00:00:01"
+	srv := New(Config{
+		Voice:           &fakeXiaozhiVoice{transcript: "豆豆，声音大一点"},
+		AccessToken:     "test-token",
+		EnableXiaozhi:   true,
+		XiaozhiDeviceID: deviceID,
+	})
+	httpServer := httptest.NewServer(srv.Handler())
+	defer httpServer.Close()
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer test-token")
+	headers.Set("Device-Id", deviceID)
+	conn, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(httpServer.URL, "http")+"/xiaozhi/v1/",
+		headers,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]any{
+		"type": "hello", "version": 1, "transport": "websocket",
+		"audio_params": map[string]any{
+			"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var hello map[string]any
+	if err := conn.ReadJSON(&hello); err != nil {
+		t.Fatal(err)
+	}
+
+	var statusRequest struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		} `json:"payload"`
+	}
+	if err := conn.ReadJSON(&statusRequest); err != nil {
+		t.Fatal(err)
+	}
+	if statusRequest.Type != "mcp" || statusRequest.Payload.Method != "tools/call" ||
+		statusRequest.Payload.Params.Name != "self.get_device_status" {
+		t.Fatalf("unexpected status request: %+v", statusRequest)
+	}
+	if err := conn.WriteJSON(map[string]any{
+		"type": "mcp",
+		"payload": map[string]any{
+			"jsonrpc": "2.0",
+			"id":      statusRequest.Payload.ID,
+			"result": map[string]any{
+				"content": []map[string]string{{
+					"type": "text", "text": `{"audio_speaker":{"volume":40}}`,
+				}},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.WriteJSON(map[string]any{"type": "listen", "state": "start", "mode": "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte{9, 8, 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	gotVolume := -1
+	gotReply := false
+	for i := 0; i < 12 && (!gotReply || gotVolume < 0); i++ {
+		messageType, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		var message struct {
+			Type    string `json:"type"`
+			State   string `json:"state"`
+			Text    string `json:"text"`
+			Payload struct {
+				Params struct {
+					Name      string `json:"name"`
+					Arguments struct {
+						Volume int `json:"volume"`
+					} `json:"arguments"`
+				} `json:"params"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(payload, &message) != nil {
+			continue
+		}
+		if message.Type == "mcp" && message.Payload.Params.Name == "self.audio_speaker.set_volume" {
+			gotVolume = message.Payload.Params.Arguments.Volume
+		}
+		if message.Type == "tts" && message.State == "sentence_start" {
+			gotReply = strings.Contains(message.Text, "大声一点")
+		}
+	}
+	if gotVolume != 55 || !gotReply {
+		t.Fatalf("volume command: volume=%d reply=%v", gotVolume, gotReply)
+	}
+}
+
 func TestXiaozhiOTARejectsUnknownDevice(t *testing.T) {
 	srv := New(Config{
 		Voice:           &fakeXiaozhiVoice{},
@@ -146,7 +258,9 @@ func TestXiaozhiOTARejectsUnknownDevice(t *testing.T) {
 	}
 }
 
-type fakeXiaozhiVoice struct{}
+type fakeXiaozhiVoice struct {
+	transcript string
+}
 
 func (*fakeXiaozhiVoice) Available() bool { return true }
 func (*fakeXiaozhiVoice) Name() string    { return "fake-xiaozhi" }
@@ -163,7 +277,7 @@ func (*fakeXiaozhiVoice) Transcribe(context.Context, []byte, string, string) (st
 func (*fakeXiaozhiVoice) Speak(context.Context, string) ([]byte, string, error) {
 	return nil, "audio/ogg", nil
 }
-func (*fakeXiaozhiVoice) StreamTranscribeOpus(
+func (v *fakeXiaozhiVoice) StreamTranscribeOpus(
 	ctx context.Context,
 	audio <-chan []byte,
 	_ int,
@@ -174,7 +288,11 @@ func (*fakeXiaozhiVoice) StreamTranscribeOpus(
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-audio:
-		return onTranscript("云朵像棉花糖", "happy")
+		transcript := v.transcript
+		if transcript == "" {
+			transcript = "云朵像棉花糖"
+		}
+		return onTranscript(transcript, "happy")
 	}
 }
 func (*fakeXiaozhiVoice) StreamSpeakOpus(
