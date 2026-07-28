@@ -80,7 +80,7 @@ func TestXiaozhiOTAAndVoiceRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	audioParams := hello["audio_params"].(map[string]any)
-	if hello["type"] != "hello" || int(audioParams["frame_duration"].(float64)) != 100 {
+	if hello["type"] != "hello" || int(audioParams["frame_duration"].(float64)) != 60 {
 		t.Fatalf("unexpected hello: %#v", hello)
 	}
 
@@ -185,4 +185,4 @@ func (*fakeXiaozhiVoice) StreamSpeakOpus(
 	return onPacket([]byte{1, 2, 3})
 }
 func (*fakeXiaozhiVoice) OpusOutputSampleRate() int    { return 24000 }
-func (*fakeXiaozhiVoice) OpusOutputFrameDuration() int { return 100 }
+func (*fakeXiaozhiVoice) OpusOutputFrameDuration() int { return 60 }

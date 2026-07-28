@@ -24,7 +24,7 @@ import (
 const (
 	defaultRealtimeSTTModel = "qwen3-asr-flash-realtime"
 	defaultRealtimeSilence  = 650
-	opusOutputFrameMS       = 100
+	opusOutputFrameMS       = 60
 )
 
 // StreamTranscribeOpus wraps raw mono Opus packets in a streaming Ogg container
