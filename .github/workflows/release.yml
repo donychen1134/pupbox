@@ -56,6 +56,12 @@ jobs:
               -o "${package_dir}/pupbox-server" \
               ./cmd/pupbox-server
 
+            GOOS=linux GOARCH="${arch}" go build \
+              -trimpath \
+              -ldflags="-s -w" \
+              -o "${package_dir}/pupbox-replay" \
+              ./cmd/pupbox-replay
+
             cp -R web/static "${package_dir}/web/static"
             cp README.md "${package_dir}/README.md"
             cp -R docs "${package_dir}/docs"

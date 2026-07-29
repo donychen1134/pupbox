@@ -363,6 +363,10 @@ local corpus and replays them through `POST /api/voice?tts=off`. This exercises
 upload parsing, silence trimming, STT, session context, activity routing,
 safety, and model replies without spending TTS quota.
 
+GitHub Release packages include this command beside `pupbox-server`. When
+working from a source checkout, replace `pupbox-replay` in the examples below
+with `go run ./cmd/pupbox-replay`.
+
 Keep the access token in the environment:
 
 ```bash
@@ -372,7 +376,7 @@ export PUPBOX_ACCESS_TOKEN=<existing-server-token>
 Collect up to 50 recent voice recordings:
 
 ```bash
-go run ./cmd/pupbox-replay collect \
+pupbox-replay collect \
   --server https://pupbox.example.com \
   --limit 50
 ```
@@ -397,7 +401,7 @@ without treating the old behavior as correct.
 Replay the corpus against a local or remote Pupbox server:
 
 ```bash
-go run ./cmd/pupbox-replay run \
+pupbox-replay run \
   --server http://127.0.0.1:8791 \
   --corpus ~/.local/share/pupbox/replay/<timestamp>
 ```
@@ -414,7 +418,7 @@ through Qwen-Audio Realtime. Run this on the machine that already holds the
 corpus and API key so recordings do not move between devices:
 
 ```bash
-go run ./cmd/pupbox-replay qwen-realtime \
+pupbox-replay qwen-realtime \
   --corpus ~/.local/share/pupbox/replay/<timestamp> \
   --limit 5
 ```
