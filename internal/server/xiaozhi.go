@@ -36,6 +36,7 @@ type xiaozhiConfig struct {
 	farewell    string
 	volumeMin   int
 	volumeMax   int
+	streaming   bool
 }
 
 type xiaozhiClientHello struct {
@@ -371,48 +372,102 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 
 	history := c.server.sessions.History(c.sessionID)
 	replyStarted := time.Now()
-	var reply string
-	var safety dog.SafetyResult
-	var activity *dog.Activity
-	var source string
-	var chatErr error
-	if volume, volumeReply, matched := c.resolveVolumeCommand(text); matched {
-		reply, source = volumeReply, "device:volume"
-		if volume >= 0 {
-			if err := c.setDeviceVolume(volume); err != nil {
-				chatErr = err
-			}
-		}
-	} else {
-		reply, safety, activity, source, chatErr = c.server.reply(turnCtx, text, history)
-	}
-	timings.ReplyMS = elapsedMS(replyStarted)
-	reply = dog.SpeechOnlyReply(dog.ClampReply(reply, 100))
-
 	_ = c.writeJSON(map[string]any{
 		"session_id": c.sessionID,
 		"type":       "llm",
 		"emotion":    xiaozhiEmotion(emotion),
 		"text":       "",
 	})
-	if err := c.writeJSON(map[string]any{
-		"session_id": c.sessionID,
-		"type":       "tts",
-		"state":      "sentence_start",
-		"text":       reply,
-	}); err != nil {
-		return err
-	}
 
-	ttsStarted := time.Now()
-	firstAudioMS := int64(-1)
-	ttsErr := c.streamSpeechOpus(turnCtx, reply, func() {
-		if firstAudioMS < 0 {
-			firstAudioMS = elapsedMS(ttsStarted)
-			timings.VoiceResponseMS = elapsedMS(replyStarted)
+	type replyResult struct {
+		streamedReplyResult
+		replyMS          int64
+		firstTokenMS     int64
+		deviceCommandErr error
+	}
+	sentences := make(chan string, 8)
+	resultCh := make(chan replyResult, 1)
+	go func() {
+		firstTokenMS := int64(0)
+		var result streamedReplyResult
+		var deviceCommandErr error
+		if volume, volumeReply, matched := c.resolveVolumeCommand(text); matched {
+			if volume >= 0 {
+				deviceCommandErr = c.setDeviceVolume(volume)
+			}
+			result = streamedReplyResult{reply: volumeReply, source: "device:volume"}
+			result.err = emitSpeechSentence(volumeReply, func(sentence string) error {
+				select {
+				case sentences <- sentence:
+					return nil
+				case <-turnCtx.Done():
+					return turnCtx.Err()
+				}
+			})
+		} else {
+			result = c.server.streamReply(
+				turnCtx,
+				text,
+				history,
+				func(sentence string) error {
+					select {
+					case sentences <- sentence:
+						return nil
+					case <-turnCtx.Done():
+						return turnCtx.Err()
+					}
+				},
+				func() {
+					if firstTokenMS == 0 {
+						firstTokenMS = elapsedMS(replyStarted)
+					}
+				},
+			)
 		}
-	})
-	timings.TTSMS = elapsedMS(ttsStarted)
+		resultCh <- replyResult{
+			streamedReplyResult: result,
+			replyMS:             elapsedMS(replyStarted),
+			firstTokenMS:        firstTokenMS,
+			deviceCommandErr:    deviceCommandErr,
+		}
+		close(sentences)
+	}()
+
+	firstAudioMS := int64(-1)
+	var ttsErr error
+	for sentence := range sentences {
+		if err := c.writeJSON(map[string]any{
+			"session_id": c.sessionID,
+			"type":       "tts",
+			"state":      "sentence_start",
+			"text":       sentence,
+		}); err != nil {
+			ttsErr = err
+			cancel()
+			break
+		}
+		ttsStarted := time.Now()
+		err := c.streamSpeechOpus(turnCtx, sentence, func() {
+			if firstAudioMS < 0 {
+				firstAudioMS = elapsedMS(ttsStarted)
+				timings.VoiceResponseMS = elapsedMS(replyStarted)
+			}
+		})
+		timings.TTSMS += elapsedMS(ttsStarted)
+		if err != nil {
+			ttsErr = err
+			cancel()
+			break
+		}
+	}
+	result := <-resultCh
+	reply := dog.SpeechOnlyReply(dog.ClampReply(result.reply, 100))
+	safety := result.safety
+	activity := result.activity
+	source := result.source
+	chatErr := errors.Join(result.err, result.deviceCommandErr)
+	timings.ReplyMS = result.replyMS
+	timings.LLMFirstTokenMS = result.firstTokenMS
 	timings.TTSFirstAudioMS = max(firstAudioMS, 0)
 	timings.TotalMS = elapsedMS(started)
 	timings.TurnTotalMS = timings.TotalMS

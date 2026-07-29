@@ -559,8 +559,8 @@ func TestEventFeedbackRejectsInvalidValue(t *testing.T) {
 
 func TestSummarizeEventsCalculatesCacheAndLatencyPercentiles(t *testing.T) {
 	events := []ConversationEvent{
-		{Source: "dashscope", TTSCache: "miss", Timings: TimingStats{STTMS: 100, ReplyMS: 200, TTSFirstAudioMS: 300, AudioDurationMS: 500, PlaybackMS: 1000, TurnTotalMS: 2000}},
-		{Source: "dashscope", TTSCache: "stream", ParentFeedback: "good", Timings: TimingStats{STTMS: 200, ReplyMS: 400, TTSFirstAudioMS: 600, AudioDurationMS: 1000, PlaybackMS: 2000, TurnTotalMS: 4000}},
+		{Source: "dashscope", TTSCache: "miss", Timings: TimingStats{STTMS: 100, ReplyMS: 200, LLMFirstTokenMS: 80, TTSFirstAudioMS: 300, AudioDurationMS: 500, PlaybackMS: 1000, TurnTotalMS: 2000}},
+		{Source: "dashscope", TTSCache: "stream", ParentFeedback: "good", Timings: TimingStats{STTMS: 200, ReplyMS: 400, LLMFirstTokenMS: 120, TTSFirstAudioMS: 600, AudioDurationMS: 1000, PlaybackMS: 2000, TurnTotalMS: 4000}},
 		{Source: "activity:story", TTSCache: "disk", Timings: TimingStats{STTMS: 300, ReplyMS: 600, TTSFirstAudioMS: 900, AudioDurationMS: 1500, PlaybackMS: 3000, TurnTotalMS: 6000}},
 	}
 	summary := summarizeEvents(events)
@@ -570,7 +570,7 @@ func TestSummarizeEventsCalculatesCacheAndLatencyPercentiles(t *testing.T) {
 	if summary.TTSCacheHitRate < 0.66 || summary.TTSCacheHitRate > 0.67 {
 		t.Fatalf("cache hit rate = %f", summary.TTSCacheHitRate)
 	}
-	if summary.STT.P50MS != 200 || summary.STT.P90MS != 300 || summary.Reply.Samples != 2 || summary.WaitFirstAudio.P50MS != 2000 || summary.WaitFirstAudio.P90MS != 3000 {
+	if summary.STT.P50MS != 200 || summary.STT.P90MS != 300 || summary.Reply.Samples != 2 || summary.LLMFirstToken.P50MS != 80 || summary.LLMFirstToken.P90MS != 120 || summary.WaitFirstAudio.P50MS != 2000 || summary.WaitFirstAudio.P90MS != 3000 {
 		t.Fatalf("summary percentiles = %+v", summary)
 	}
 }

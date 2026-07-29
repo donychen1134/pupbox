@@ -78,6 +78,15 @@ type StructuredChatProvider interface {
 	CreateStructuredResponse(ctx context.Context, instructions, input string) (string, error)
 }
 
+type StreamingStructuredChatProvider interface {
+	StreamStructuredResponse(
+		ctx context.Context,
+		instructions string,
+		input string,
+		onDelta func(string) error,
+	) (string, error)
+}
+
 type VoiceProvider interface {
 	Available() bool
 	Name() string
@@ -115,6 +124,7 @@ type Config struct {
 	XiaozhiFarewell  string
 	XiaozhiVolumeMin int
 	XiaozhiVolumeMax int
+	XiaozhiStreaming bool
 	Logger           *slog.Logger
 }
 
@@ -165,6 +175,7 @@ func New(cfg Config) *Server {
 			farewell:    strings.TrimSpace(cfg.XiaozhiFarewell),
 			volumeMin:   volumeMin,
 			volumeMax:   volumeMax,
+			streaming:   cfg.XiaozhiStreaming,
 		},
 		speechCache: make(map[string]cachedSpeech),
 		speechDisk:  speechDisk,
@@ -244,41 +255,42 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	eventLogPath, eventLogReady, eventCount, eventLogErr := s.events.Status()
 	speechCacheDir, speechCacheReady, speechCacheEntries, speechCacheErr := s.speechDisk.Status()
 	health := map[string]any{
-		"ok":                   true,
-		"auth_required":        s.accessToken != "",
-		"event_log":            s.events != nil,
-		"event_log_ready":      eventLogReady,
-		"event_log_path":       eventLogPath,
-		"event_log_events":     eventCount,
-		"event_log_error":      errorString(eventLogErr),
-		"tts_cache":            s.speechDisk != nil,
-		"tts_cache_ready":      speechCacheReady,
-		"tts_cache_dir":        speechCacheDir,
-		"tts_cache_entries":    speechCacheEntries,
-		"tts_cache_error":      errorString(speechCacheErr),
-		"tts_warm_running":     s.warmRunning.Load(),
-		"tts_warm_total":       s.warmTotal.Load(),
-		"tts_warm_done":        s.warmDone.Load(),
-		"tts_warm_errors":      s.warmErrors.Load(),
-		"recordings":           s.recordings != nil,
-		"mode":                 s.mode(),
-		"dog":                  dog.Name,
-		"chat_provider":        s.chatProvider(),
-		"voice_provider":       s.voiceProvider(),
-		"chat_model":           s.modelName("chat"),
-		"stt_model":            s.modelName("stt"),
-		"stt_trim_silence":     s.trimSTT,
-		"tts_model":            s.modelName("tts"),
-		"tts_voice":            s.modelName("voice"),
-		"tts_format":           s.modelName("format"),
-		"tts_speed":            s.ttsSpeed(),
-		"tts_streaming":        s.streamingVoiceAvailable(),
-		"xiaozhi_enabled":      s.xiaozhi.enabled,
-		"xiaozhi_ready":        s.xiaozhiReady(),
-		"xiaozhi_idle_seconds": int64(s.xiaozhi.idleTimeout / time.Second),
-		"xiaozhi_volume_min":   s.xiaozhi.volumeMin,
-		"xiaozhi_volume_max":   s.xiaozhi.volumeMax,
-		"server_time":          time.Now().Format(time.RFC3339),
+		"ok":                     true,
+		"auth_required":          s.accessToken != "",
+		"event_log":              s.events != nil,
+		"event_log_ready":        eventLogReady,
+		"event_log_path":         eventLogPath,
+		"event_log_events":       eventCount,
+		"event_log_error":        errorString(eventLogErr),
+		"tts_cache":              s.speechDisk != nil,
+		"tts_cache_ready":        speechCacheReady,
+		"tts_cache_dir":          speechCacheDir,
+		"tts_cache_entries":      speechCacheEntries,
+		"tts_cache_error":        errorString(speechCacheErr),
+		"tts_warm_running":       s.warmRunning.Load(),
+		"tts_warm_total":         s.warmTotal.Load(),
+		"tts_warm_done":          s.warmDone.Load(),
+		"tts_warm_errors":        s.warmErrors.Load(),
+		"recordings":             s.recordings != nil,
+		"mode":                   s.mode(),
+		"dog":                    dog.Name,
+		"chat_provider":          s.chatProvider(),
+		"voice_provider":         s.voiceProvider(),
+		"chat_model":             s.modelName("chat"),
+		"xiaozhi_chat_streaming": s.xiaozhi.streaming,
+		"stt_model":              s.modelName("stt"),
+		"stt_trim_silence":       s.trimSTT,
+		"tts_model":              s.modelName("tts"),
+		"tts_voice":              s.modelName("voice"),
+		"tts_format":             s.modelName("format"),
+		"tts_speed":              s.ttsSpeed(),
+		"tts_streaming":          s.streamingVoiceAvailable(),
+		"xiaozhi_enabled":        s.xiaozhi.enabled,
+		"xiaozhi_ready":          s.xiaozhiReady(),
+		"xiaozhi_idle_seconds":   int64(s.xiaozhi.idleTimeout / time.Second),
+		"xiaozhi_volume_min":     s.xiaozhi.volumeMin,
+		"xiaozhi_volume_max":     s.xiaozhi.volumeMax,
+		"server_time":            time.Now().Format(time.RFC3339),
 	}
 	if info, ok := s.xiaozhiDeviceSnapshot(); ok {
 		health["xiaozhi_device"] = info
@@ -818,25 +830,11 @@ func (s *Server) nextTraceID() string {
 }
 
 func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (string, dog.SafetyResult, *dog.Activity, string, error) {
-	safety := dog.CheckSafety(text)
-	if safety.Triggered {
-		return safety.Reply, safety, nil, "safety", nil
-	}
-	if reply, ok := dog.ClarificationReply(text, history); ok {
-		return dog.SpeechOnlyReply(reply), safety, nil, "context:clarification", nil
+	if reply, safety, activity, source, handled := s.deterministicReply(text, history); handled {
+		return reply, safety, activity, source, nil
 	}
 
-	if activity, ok := dog.PlanActivityWithHistory(text, history); ok {
-		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
-		return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
-	}
-	if s.useSurprise {
-		if activity, ok := dog.PlanSceneSurprise(text, history); ok {
-			activity.Reply = dog.SpeechOnlyReply(activity.Reply)
-			return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
-		}
-	}
-
+	safety := dog.SafetyResult{}
 	if s.useChat {
 		if structured, ok := s.chat.(StructuredChatProvider); ok {
 			raw, err := structured.CreateStructuredResponse(ctx, dog.RoutingInstructions(), contextualInput(history, text))
@@ -869,6 +867,28 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 	}
 
 	return dog.SpeechOnlyReply(dog.MockReply(text)), safety, nil, "mock", nil
+}
+
+func (s *Server) deterministicReply(text string, history []dog.Turn) (string, dog.SafetyResult, *dog.Activity, string, bool) {
+	safety := dog.CheckSafety(text)
+	if safety.Triggered {
+		return safety.Reply, safety, nil, "safety", true
+	}
+	if reply, ok := dog.ClarificationReply(text, history); ok {
+		return dog.SpeechOnlyReply(reply), safety, nil, "context:clarification", true
+	}
+
+	if activity, ok := dog.PlanActivityWithHistory(text, history); ok {
+		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
+		return activity.Reply, safety, &activity, "activity:" + activity.ID, true
+	}
+	if s.useSurprise {
+		if activity, ok := dog.PlanSceneSurprise(text, history); ok {
+			activity.Reply = dog.SpeechOnlyReply(activity.Reply)
+			return activity.Reply, safety, &activity, "activity:" + activity.ID, true
+		}
+	}
+	return "", safety, nil, "", false
 }
 
 func activityID(activity *dog.Activity) string {
@@ -1269,6 +1289,7 @@ type TimingStats struct {
 	UploadMS           int64   `json:"upload_ms,omitempty"`
 	STTMS              int64   `json:"stt_ms"`
 	ReplyMS            int64   `json:"reply_ms"`
+	LLMFirstTokenMS    int64   `json:"llm_first_token_ms,omitempty"`
 	TTSMS              int64   `json:"tts_ms"`
 	TTSFirstAudioMS    int64   `json:"tts_first_audio_ms,omitempty"`
 	VoiceResponseMS    int64   `json:"voice_response_ms,omitempty"`

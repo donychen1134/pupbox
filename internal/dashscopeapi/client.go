@@ -158,6 +158,103 @@ func (c *Client) CreateStructuredResponse(ctx context.Context, instructions, inp
 	return c.createResponse(ctx, instructions, input, true)
 }
 
+func (c *Client) StreamStructuredResponse(
+	ctx context.Context,
+	instructions string,
+	input string,
+	onDelta func(string) error,
+) (string, error) {
+	if !c.Available() {
+		return "", errors.New("dashscope api key is not configured")
+	}
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", errors.New("empty chat input")
+	}
+	if onDelta == nil {
+		return "", errors.New("chat delta callback is required")
+	}
+
+	messages := []map[string]string{{"role": "user", "content": input}}
+	if strings.TrimSpace(instructions) != "" {
+		messages = append([]map[string]string{{"role": "system", "content": instructions}}, messages...)
+	}
+	payload := map[string]any{
+		"model":           c.chatModel,
+		"messages":        messages,
+		"temperature":     0.2,
+		"max_tokens":      180,
+		"stream":          true,
+		"response_format": map[string]string{"type": "json_object"},
+	}
+
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return "", err
+	}
+	req, err := c.newJSONRequest(ctx, "/compatible-mode/v1/chat/completions", &body)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return "", fmt.Errorf("dashscope streaming chat api returned %s: %s", resp.Status, string(data))
+	}
+
+	var content strings.Builder
+	finished := false
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 16*1024), 1<<20)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if line == "" {
+			continue
+		}
+		if line == "[DONE]" {
+			finished = true
+			continue
+		}
+		var event chatCompletionStreamResponse
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return "", fmt.Errorf("decode dashscope streaming chat event: %w", err)
+		}
+		if len(event.Choices) == 0 {
+			continue
+		}
+		choice := event.Choices[0]
+		if choice.FinishReason != "" {
+			finished = true
+		}
+		if choice.Delta.Content == "" {
+			continue
+		}
+		content.WriteString(choice.Delta.Content)
+		if err := onDelta(choice.Delta.Content); err != nil {
+			return "", err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	result := strings.TrimSpace(content.String())
+	if result == "" {
+		return "", errors.New("dashscope streaming chat returned no content")
+	}
+	if !finished {
+		return result, errors.New("dashscope streaming chat ended before completion")
+	}
+	return result, nil
+}
+
 func (c *Client) createResponse(ctx context.Context, instructions, input string, structured bool) (string, error) {
 	if !c.Available() {
 		return "", errors.New("dashscope api key is not configured")
@@ -478,6 +575,15 @@ type chatCompletionResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+	} `json:"choices"`
+}
+
+type chatCompletionStreamResponse struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 

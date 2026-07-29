@@ -44,6 +44,7 @@ func main() {
 		XiaozhiFarewell:  envDefault("PUPBOX_XIAOZHI_FAREWELL", "豆豆要休息一会儿啦，下次再来找我玩，拜拜。"),
 		XiaozhiVolumeMin: envInt("PUPBOX_XIAOZHI_VOLUME_MIN", 20),
 		XiaozhiVolumeMax: envInt("PUPBOX_XIAOZHI_VOLUME_MAX", 75),
+		XiaozhiStreaming: envBool("PUPBOX_XIAOZHI_STREAMING", true),
 		Logger:           logger,
 	})
 	runCtx, cancelRun := context.WithCancel(context.Background())

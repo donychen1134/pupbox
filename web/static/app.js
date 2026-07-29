@@ -125,6 +125,7 @@ function renderEventSummary() {
     percentileMetric("说完等待", summary.wait_first_audio),
     percentileMetric("完整一轮", summary.turn_total),
     percentileMetric("STT", summary.stt),
+    percentileMetric("Qwen 首字", summary.llm_first_token),
     percentileMetric("Qwen/回复", summary.reply),
     percentileMetric("TTS 首音", summary.tts_first_audio),
   );
@@ -322,6 +323,7 @@ function eventTimingBreakdown(event) {
   const values = [
     ["上传", timings.upload_ms],
     ["STT", timings.stt_ms],
+    ["Qwen 首字", timings.llm_first_token_ms],
     [event.source === "dashscope" ? "Qwen" : "回复", timings.reply_ms],
     ["TTS 首音", timings.tts_first_audio_ms],
     ["播放", timings.playback_ms],

@@ -74,6 +74,7 @@ type EventSummary struct {
 	TurnTotal       PercentileStats `json:"turn_total"`
 	STT             PercentileStats `json:"stt"`
 	Reply           PercentileStats `json:"reply"`
+	LLMFirstToken   PercentileStats `json:"llm_first_token"`
 	TTSFirstAudio   PercentileStats `json:"tts_first_audio"`
 }
 
@@ -204,6 +205,7 @@ func summarizeEvents(events []ConversationEvent) EventSummary {
 	turnTotal := make([]int64, 0, len(events))
 	stt := make([]int64, 0, len(events))
 	reply := make([]int64, 0, len(events))
+	llmFirstToken := make([]int64, 0, len(events))
 	ttsFirstAudio := make([]int64, 0, len(events))
 	for _, event := range events {
 		if event.ParentFeedback != "" {
@@ -224,6 +226,7 @@ func summarizeEvents(events []ConversationEvent) EventSummary {
 		appendPositive(&stt, event.Timings.STTMS)
 		if event.Source == "dashscope" || event.Source == "openai" {
 			appendPositive(&reply, event.Timings.ReplyMS)
+			appendPositive(&llmFirstToken, event.Timings.LLMFirstTokenMS)
 		}
 		appendPositive(&ttsFirstAudio, event.Timings.TTSFirstAudioMS)
 		if event.Timings.PlaybackMS > 0 {
@@ -238,6 +241,7 @@ func summarizeEvents(events []ConversationEvent) EventSummary {
 	summary.TurnTotal = percentileStats(turnTotal)
 	summary.STT = percentileStats(stt)
 	summary.Reply = percentileStats(reply)
+	summary.LLMFirstToken = percentileStats(llmFirstToken)
 	summary.TTSFirstAudio = percentileStats(ttsFirstAudio)
 	return summary
 }

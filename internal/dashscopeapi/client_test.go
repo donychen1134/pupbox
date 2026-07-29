@@ -94,6 +94,43 @@ func TestCreateStructuredResponseRequestsJSONObject(t *testing.T) {
 	}
 }
 
+func TestStreamStructuredResponseEmitsSSEDeltas(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		if payload["stream"] != true {
+			t.Errorf("stream = %#v, want true", payload["stream"])
+		}
+		format, ok := payload["response_format"].(map[string]any)
+		if !ok || format["type"] != "json_object" {
+			t.Errorf("response_format = %#v, want json_object", payload["response_format"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"kind\\\":\\\"chat\\\",\\\"reply\\\":\\\"云朵像\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"棉花糖。\\\"}\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	client := New(Config{APIKey: "test-key", BaseURL: upstream.URL})
+	var deltas []string
+	got, err := client.StreamStructuredResponse(context.Background(), "route", "云朵像什么", func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamStructuredResponse: %v", err)
+	}
+	if len(deltas) != 2 || got != `{"kind":"chat","reply":"云朵像棉花糖。"}` {
+		t.Fatalf("deltas = %#v, response = %q", deltas, got)
+	}
+}
+
 func TestParseSpeechRate(t *testing.T) {
 	t.Parallel()
 
