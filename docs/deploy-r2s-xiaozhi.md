@@ -54,7 +54,7 @@ logread -e pupbox
 1. 为微雪板增加独立构建变体。
 2. 将 `CONFIG_OTA_URL` 指向 R2S 的 `/xiaozhi/ota/`。
 3. 启用 `CONFIG_FORCE_DEFAULT_OTA_URL=y`，避免配网 NVS 里的旧服务地址覆盖自建地址。
-4. 启用产品模式的安全音量、电池监测、空闲休眠和按键恢复。
+4. 启用产品模式的安全音量、空闲休眠和按键恢复。
 5. 使用 MultiNet7 在板端识别“豆豆你好”和“小狗豆豆”。
 
 仓库中的 `firmware/xiaozhi/patches/0001-pupbox-product-mode.patch` 保存上游源码改动，`firmware/xiaozhi/config.pupbox.example.json` 保存不含真实地址和密钥的板型模板。将模板复制到小智板型目录、改成 R2S 的固定 LAN 地址后再构建。
@@ -88,7 +88,15 @@ logread -e pupbox
 
 `FORCE_DEFAULT_OTA_URL` 是 Pupbox 对上游源码增加的布尔配置。`Ota::GetCheckVersionUrl()` 在该选项启用时直接返回 `CONFIG_OTA_URL`；关闭时保持小智原有的配网覆盖行为。两个唤醒词使用不带声调、以空格分隔的拼音写入 MultiNet7；显示文本则作为唤醒后发给服务端的第一句话。
 
-产品模式将扬声器音量硬限制为 75，定期读取板载电池 ADC，并在连续确认低电量后提示和深度休眠。无活动时先关闭屏幕和音频；短按 `BOOT` 可恢复。充电状态由电压趋势估算，不等同于独立充电管理芯片的硬件状态脚。
+产品模式将扬声器音量硬限制为 75。无活动时先关闭屏幕和音频；短按 `BOOT` 可恢复。
+
+微雪 ESP32-S3-AUDIO-Board 的 `BAT_ADC` 检测通路出厂默认未连接。未改硬件时 ADC 会悬空，软件会得到从 100% 缓慢跌到低电量的假读数，因此 Pupbox 默认不报告电量，也不执行低电量休眠。微雪原理图说明，只有焊接板上的 `BAT_ADC` 0Ω 跳线后才能启用检测，而且 GPIO1 摄像头输入会同时不可用。完成该硬件改造并实测校准后，才在板型配置中加入：
+
+```text
+CONFIG_PUPBOX_BATTERY_MONITOR=y
+```
+
+该模式使用电压趋势估算充电状态，不等同于独立充电管理芯片的硬件状态脚。正式装入毛绒外壳前，更稳妥的方案是增加带电量计和保护板的电源模块。
 
 构建与烧录：
 
