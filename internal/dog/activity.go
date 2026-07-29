@@ -2,6 +2,7 @@ package dog
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"math/big"
 	"strings"
 	"sync/atomic"
@@ -29,6 +30,21 @@ var activitySequences = map[string]*atomic.Uint64{
 }
 
 var babbleSequence atomic.Uint64
+
+func init() {
+	var seed [8]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		return
+	}
+	base := binary.LittleEndian.Uint64(seed[:])
+	for id, sequence := range activitySequences {
+		if replies := activityReplyVariants[id]; len(replies) > 0 {
+			sequence.Store(base % uint64(len(replies)))
+			base = base*6364136223846793005 + 1
+		}
+	}
+	babbleSequence.Store(base % uint64(len(babbleActivities())))
+}
 
 type Activity struct {
 	ID       string `json:"id"`
@@ -253,6 +269,9 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if containsAny(normalized, "听不懂", "听不清", "听不见", "没听见", "不清楚", "有点卡", "太卡", "卡住") {
 		return Activity{}, false
 	}
+	if isActivityAcceptance(normalized) && hasMultipleActivityOffer(history) {
+		return fixedActivity("chat", ambiguousChoiceReply(history))
+	}
 	if containsAny(normalized, "再唱一个", "再唱一首", "换个童谣", "换首童谣", "继续唱") ||
 		(equalsAny(normalized, "再来一个", "换一个") && hasRecentActivity(history, "nursery_rhyme")) {
 		return byID("nursery_rhyme")
@@ -422,6 +441,33 @@ func hasPendingAnimalOffer(history []Turn) bool {
 	}
 	reply := normalizeToddlerIntentText(history[len(history)-1].Reply)
 	return containsAny(reply, "猜动物", "猜个小动物") && containsAny(reply, "吗", "好不好", "想先玩哪个", "故事还是", "还是猜动物")
+}
+
+func hasMultipleActivityOffer(history []Turn) bool {
+	if len(history) == 0 {
+		return false
+	}
+	reply := normalizeToddlerIntentText(history[len(history)-1].Reply)
+	activityTerms := []string{"故事", "猜动物", "数数", "猜颜色", "过家家", "旅行", "魔法", "童谣", "唱歌"}
+	matches := 0
+	for _, term := range activityTerms {
+		if strings.Contains(reply, term) {
+			matches++
+		}
+	}
+	return matches >= 2 && containsAny(reply, "还是", "或者", "先玩哪个", "选一个")
+}
+
+func ambiguousChoiceReply(history []Turn) string {
+	variants := []string{
+		"嗯，豆豆在这里。你想好再告诉豆豆，也可以随便说说你看见了什么。",
+		"好呀，豆豆先不替你选。你说故事或动物都可以，说别的也可以。",
+		"豆豆听见啦。我们不着急选游戏，你现在想到什么就说什么。",
+	}
+	if len(history) == 0 {
+		return variants[0]
+	}
+	return variants[len(history)%len(variants)]
 }
 
 func isActivityAcceptance(text string) bool {
@@ -712,38 +758,38 @@ func babbleActivities() []Activity {
 			ID:       "clap",
 			Label:    "回应",
 			Prompt:   "豆豆回应",
-			Reply:    "汪汪，豆豆听见你啦。",
+			Reply:    "汪汪，豆豆听见啦。你的声音像一辆小火车，呜呜。",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
 			Prompt:   "豆豆回应",
-			Reply:    "嗯，豆豆在这里。我们猜个小动物，好不好？",
+			Reply:    "嗯，豆豆在这里。窗外的云会不会也在说嗯呢？",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "啊呀，豆豆在这里。",
+			Reply:    "啊呀，豆豆也来一个小声音：啵。",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "豆豆听见啦。想玩数数，还是猜动物？",
+			Reply:    "豆豆听见啦。你想学小猫喵，还是小狗汪？",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "嗯，豆豆在这里。你可以说，讲故事，或者猜动物。",
+			Reply:    "嗯，豆豆在这里。你慢慢说，一个字也可以。",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "嘿嘿，豆豆听得清清楚楚。",
+			Reply:    "嘿嘿，这个声音圆滚滚的，像小泡泡飘起来啦。",
 			Category: "chat",
 		},
 	}
@@ -1033,14 +1079,14 @@ var activityReplyVariants = map[string][]string{
 		"豆豆正在安安静静地陪你聊天。",
 	},
 	"greeting": {
-		"你好呀，豆豆会讲故事、猜动物。你想先玩哪个？",
-		"你好你好，豆豆也来问好。",
-		"嗨，豆豆听见你啦。",
-		"你好呀，今天也见到你啦。",
-		"豆豆在这里，向你说声你好。",
-		"你好呀，你的声音豆豆听见了。",
-		"汪，你好呀，豆豆来啦。",
-		"你好，豆豆今天也想和你聊天。",
+		"你好呀，豆豆来啦。刚才豆豆想到一朵软软的云。你今天想到什么啦？",
+		"你好你好，豆豆也来问好。汪一声，小狗频道打开啦。",
+		"嗨，豆豆听见你啦。你说一句，豆豆就接住一句。",
+		"你好呀，今天又见到你啦。豆豆把一个小小的开心留给你。",
+		"豆豆在这里，认真向你说声你好。今天可以聊天，也可以玩声音。",
+		"你好呀，你的声音豆豆听见了，清清亮亮的。你想说什么都可以。",
+		"汪，你好呀，豆豆来啦。小火车呜呜一声，我们的聊天出发啦。",
+		"你好，豆豆今天也想和你聊天。豆豆先说一个：草莓闻起来甜甜的。",
 	},
 	"farewell": {
 		"好呀，豆豆先休息啦。下次再一起玩。",

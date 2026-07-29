@@ -182,7 +182,7 @@ func (c *Client) StreamStructuredResponse(
 	payload := map[string]any{
 		"model":           c.chatModel,
 		"messages":        messages,
-		"temperature":     0.2,
+		"temperature":     structuredChatTemperature(c.chatModel),
 		"max_tokens":      180,
 		"stream":          true,
 		"response_format": map[string]string{"type": "json_object"},
@@ -278,7 +278,7 @@ func (c *Client) createResponse(ctx context.Context, instructions, input string,
 	}
 	if structured {
 		payload["response_format"] = map[string]string{"type": "json_object"}
-		payload["temperature"] = 0.2
+		payload["temperature"] = structuredChatTemperature(c.chatModel)
 	}
 
 	var body bytes.Buffer
@@ -320,6 +320,13 @@ func chatTemperature(model string) float64 {
 		return 0.92
 	}
 	return 0.7
+}
+
+func structuredChatTemperature(model string) float64 {
+	if strings.Contains(strings.ToLower(model), "character") {
+		return 0.65
+	}
+	return 0.35
 }
 
 func (c *Client) Transcribe(ctx context.Context, audio []byte, filename, contentType string) (string, error) {

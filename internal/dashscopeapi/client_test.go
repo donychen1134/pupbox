@@ -62,6 +62,9 @@ func TestCharacterModelUsesRolePlayTemperature(t *testing.T) {
 	if got, want := chatTemperature("qwen-turbo"), 0.7; got != want {
 		t.Fatalf("fallback temperature = %v, want %v", got, want)
 	}
+	if got, want := structuredChatTemperature("qwen-plus-character"), 0.65; got != want {
+		t.Fatalf("structured character temperature = %v, want %v", got, want)
+	}
 }
 
 func TestCreateStructuredResponseRequestsJSONObject(t *testing.T) {
@@ -76,8 +79,8 @@ func TestCreateStructuredResponseRequestsJSONObject(t *testing.T) {
 		if !ok || format["type"] != "json_object" {
 			t.Errorf("response_format = %#v, want json_object", payload["response_format"])
 		}
-		if payload["temperature"] != float64(0.2) {
-			t.Errorf("temperature = %#v, want 0.2", payload["temperature"])
+		if payload["temperature"] != float64(0.65) {
+			t.Errorf("temperature = %#v, want 0.65", payload["temperature"])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"kind\":\"activity\",\"activity_id\":\"animal_guess\",\"reply\":\"\"}"}}]}`))

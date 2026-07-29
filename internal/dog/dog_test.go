@@ -379,11 +379,19 @@ func TestAnimalGuessUsesFamiliarAnimals(t *testing.T) {
 	}
 }
 
-func TestAnimalOfferAffirmationStartsChildGuessing(t *testing.T) {
+func TestAmbiguousActivityOfferDoesNotChooseForChild(t *testing.T) {
 	history := []Turn{{User: "你好", Reply: "豆豆会讲故事、猜动物。你想先玩哪个？", ActivityID: "greeting"}}
 	activity, ok := PlanActivityWithHistory("嗯", history)
+	if !ok || activity.ID != "chat" || strings.Contains(activity.Reply, "你来猜") {
+		t.Fatalf("ambiguous offer affirmation = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestSingleAnimalOfferAffirmationStillStartsChildGuessing(t *testing.T) {
+	history := []Turn{{User: "玩什么", Reply: "我们猜个小动物，好不好？", ActivityID: "guide"}}
+	activity, ok := PlanActivityWithHistory("嗯", history)
 	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "你来猜") {
-		t.Fatalf("animal offer affirmation = %#v ok=%v", activity, ok)
+		t.Fatalf("single animal offer affirmation = %#v ok=%v", activity, ok)
 	}
 }
 
@@ -594,6 +602,9 @@ func TestBabbleActivitiesAvoidEmptyConversationFiller(t *testing.T) {
 	for _, activity := range babbleActivities() {
 		if strings.Contains(activity.Reply, "豆豆也想和你说话") {
 			t.Fatalf("generic filler remains in babble reply: %q", activity.Reply)
+		}
+		if strings.Contains(activity.Reply, "数数") || strings.Contains(activity.Reply, "猜动物") {
+			t.Fatalf("babble reply forced a structured game: %q", activity.Reply)
 		}
 	}
 }

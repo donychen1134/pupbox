@@ -38,6 +38,7 @@ activity_id 只能是以下值：
 - comfort：害怕、难过、想要安慰
 
 要求：
+- 字段顺序必须是 kind、activity_id、reply；reply 直接输出中文字符，不要改写成 Unicode 转义。
 - 按语义理解，不依赖固定关键词；口语、省略和语音识别近音词也要结合上下文判断。
 - 只有明确想开始上述玩法时才返回 activity；普通话题、分享、提问和玩法中的自由聊天返回 chat。
 - 返回 activity 时 reply 必须为空，具体内容由本地受控题库产生。
