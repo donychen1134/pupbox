@@ -39,6 +39,8 @@ type Server struct {
 	trimSTT     bool
 	sessions    *SessionStore
 	xiaozhi     xiaozhiConfig
+	xiaozhiMu   sync.RWMutex
+	xiaozhiInfo xiaozhiDeviceStatus
 	speechMu    sync.Mutex
 	speechCache map[string]cachedSpeech
 	speechDisk  *SpeechDiskCache
@@ -109,6 +111,10 @@ type Config struct {
 	EnableXiaozhi    bool
 	XiaozhiDeviceID  string
 	XiaozhiWSURL     string
+	XiaozhiIdleTime  time.Duration
+	XiaozhiFarewell  string
+	XiaozhiVolumeMin int
+	XiaozhiVolumeMax int
 	Logger           *slog.Logger
 }
 
@@ -137,6 +143,7 @@ func New(cfg Config) *Server {
 			logger.Warn("speech cache is not ready", "error", err)
 		}
 	}
+	volumeMin, volumeMax := normalizedVolumeRange(cfg.XiaozhiVolumeMin, cfg.XiaozhiVolumeMax)
 	s := &Server{
 		mux:         http.NewServeMux(),
 		chat:        cfg.Chat,
@@ -151,9 +158,13 @@ func New(cfg Config) *Server {
 		trimSTT:     cfg.TrimSTTSilence,
 		sessions:    NewSessionStore(128, 10, 30*time.Minute),
 		xiaozhi: xiaozhiConfig{
-			enabled:  cfg.EnableXiaozhi,
-			deviceID: normalizeDeviceID(cfg.XiaozhiDeviceID),
-			wsURL:    strings.TrimSpace(cfg.XiaozhiWSURL),
+			enabled:     cfg.EnableXiaozhi,
+			deviceID:    normalizeDeviceID(cfg.XiaozhiDeviceID),
+			wsURL:       strings.TrimSpace(cfg.XiaozhiWSURL),
+			idleTimeout: cfg.XiaozhiIdleTime,
+			farewell:    strings.TrimSpace(cfg.XiaozhiFarewell),
+			volumeMin:   volumeMin,
+			volumeMax:   volumeMax,
 		},
 		speechCache: make(map[string]cachedSpeech),
 		speechDisk:  speechDisk,
@@ -162,6 +173,15 @@ func New(cfg Config) *Server {
 	}
 	s.routes()
 	return s
+}
+
+func normalizedVolumeRange(minimum, maximum int) (int, int) {
+	minimum = normalizedVolumeLimit(minimum, 20)
+	maximum = normalizedVolumeLimit(maximum, 75)
+	if minimum >= maximum {
+		return 20, 75
+	}
+	return minimum, maximum
 }
 
 func (s *Server) Handler() http.Handler {
@@ -223,40 +243,54 @@ func requestAccessToken(r *http.Request) string {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	eventLogPath, eventLogReady, eventCount, eventLogErr := s.events.Status()
 	speechCacheDir, speechCacheReady, speechCacheEntries, speechCacheErr := s.speechDisk.Status()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                true,
-		"auth_required":     s.accessToken != "",
-		"event_log":         s.events != nil,
-		"event_log_ready":   eventLogReady,
-		"event_log_path":    eventLogPath,
-		"event_log_events":  eventCount,
-		"event_log_error":   errorString(eventLogErr),
-		"tts_cache":         s.speechDisk != nil,
-		"tts_cache_ready":   speechCacheReady,
-		"tts_cache_dir":     speechCacheDir,
-		"tts_cache_entries": speechCacheEntries,
-		"tts_cache_error":   errorString(speechCacheErr),
-		"tts_warm_running":  s.warmRunning.Load(),
-		"tts_warm_total":    s.warmTotal.Load(),
-		"tts_warm_done":     s.warmDone.Load(),
-		"tts_warm_errors":   s.warmErrors.Load(),
-		"recordings":        s.recordings != nil,
-		"mode":              s.mode(),
-		"dog":               dog.Name,
-		"chat_provider":     s.chatProvider(),
-		"voice_provider":    s.voiceProvider(),
-		"chat_model":        s.modelName("chat"),
-		"stt_model":         s.modelName("stt"),
-		"stt_trim_silence":  s.trimSTT,
-		"tts_model":         s.modelName("tts"),
-		"tts_voice":         s.modelName("voice"),
-		"tts_format":        s.modelName("format"),
-		"tts_speed":         s.ttsSpeed(),
-		"tts_streaming":     s.streamingVoiceAvailable(),
-		"xiaozhi_enabled":   s.xiaozhi.enabled,
-		"xiaozhi_ready":     s.xiaozhiReady(),
-		"server_time":       time.Now().Format(time.RFC3339),
-	})
+	health := map[string]any{
+		"ok":                   true,
+		"auth_required":        s.accessToken != "",
+		"event_log":            s.events != nil,
+		"event_log_ready":      eventLogReady,
+		"event_log_path":       eventLogPath,
+		"event_log_events":     eventCount,
+		"event_log_error":      errorString(eventLogErr),
+		"tts_cache":            s.speechDisk != nil,
+		"tts_cache_ready":      speechCacheReady,
+		"tts_cache_dir":        speechCacheDir,
+		"tts_cache_entries":    speechCacheEntries,
+		"tts_cache_error":      errorString(speechCacheErr),
+		"tts_warm_running":     s.warmRunning.Load(),
+		"tts_warm_total":       s.warmTotal.Load(),
+		"tts_warm_done":        s.warmDone.Load(),
+		"tts_warm_errors":      s.warmErrors.Load(),
+		"recordings":           s.recordings != nil,
+		"mode":                 s.mode(),
+		"dog":                  dog.Name,
+		"chat_provider":        s.chatProvider(),
+		"voice_provider":       s.voiceProvider(),
+		"chat_model":           s.modelName("chat"),
+		"stt_model":            s.modelName("stt"),
+		"stt_trim_silence":     s.trimSTT,
+		"tts_model":            s.modelName("tts"),
+		"tts_voice":            s.modelName("voice"),
+		"tts_format":           s.modelName("format"),
+		"tts_speed":            s.ttsSpeed(),
+		"tts_streaming":        s.streamingVoiceAvailable(),
+		"xiaozhi_enabled":      s.xiaozhi.enabled,
+		"xiaozhi_ready":        s.xiaozhiReady(),
+		"xiaozhi_idle_seconds": int64(s.xiaozhi.idleTimeout / time.Second),
+		"xiaozhi_volume_min":   s.xiaozhi.volumeMin,
+		"xiaozhi_volume_max":   s.xiaozhi.volumeMax,
+		"server_time":          time.Now().Format(time.RFC3339),
+	}
+	if info, ok := s.xiaozhiDeviceSnapshot(); ok {
+		health["xiaozhi_device"] = info
+	}
+	writeJSON(w, http.StatusOK, health)
+}
+
+func normalizedVolumeLimit(value, fallback int) int {
+	if value <= 0 || value > 100 {
+		return fallback
+	}
+	return value
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

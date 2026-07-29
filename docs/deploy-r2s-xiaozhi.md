@@ -55,7 +55,7 @@ logread -e pupbox
 2. 将 `CONFIG_OTA_URL` 指向 R2S 的 `/xiaozhi/ota/`。
 3. 启用 `CONFIG_FORCE_DEFAULT_OTA_URL=y`，避免配网 NVS 里的旧服务地址覆盖自建地址。
 
-仓库中的 `firmware/xiaozhi/patches/0001-force-default-ota-url.patch` 保存上游源码改动，`firmware/xiaozhi/config.pupbox.example.json` 保存不含真实地址和密钥的板型模板。将模板复制到小智板型目录、改成 R2S 的固定 LAN 地址后再构建。
+仓库中的 `firmware/xiaozhi/patches/0001-pupbox-product-mode.patch` 保存上游源码改动，`firmware/xiaozhi/config.pupbox.example.json` 保存不含真实地址和密钥的板型模板。将模板复制到小智板型目录、改成 R2S 的固定 LAN 地址后再构建。
 
 示例板型配置：
 
@@ -81,6 +81,7 @@ logread -e pupbox
 构建与烧录：
 
 ```bash
+source ~/.espressif/frameworks/esp-idf-v6.0.2/export.sh
 python3 scripts/release.py waveshare/esp32-s3-audio-board \
   -c config.pupbox.json \
   --name esp32-s3-audio-board-pupbox

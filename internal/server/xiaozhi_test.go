@@ -7,9 +7,100 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
+	const deviceID = "02:00:00:00:00:01"
+	const farewell = "豆豆先休息啦，拜拜。"
+	srv := New(Config{
+		Voice:           &fakeXiaozhiVoice{},
+		AccessToken:     "test-token",
+		EnableXiaozhi:   true,
+		XiaozhiDeviceID: deviceID,
+		XiaozhiIdleTime: 60 * time.Millisecond,
+		XiaozhiFarewell: farewell,
+	})
+	httpServer := httptest.NewServer(srv.Handler())
+	defer httpServer.Close()
+
+	connect := func() *websocket.Conn {
+		t.Helper()
+		headers := http.Header{}
+		headers.Set("Authorization", "Bearer test-token")
+		headers.Set("Device-Id", deviceID)
+		conn, _, err := websocket.DefaultDialer.Dial(
+			"ws"+strings.TrimPrefix(httpServer.URL, "http")+"/xiaozhi/v1/",
+			headers,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.WriteJSON(map[string]any{
+			"type": "hello", "version": 1, "transport": "websocket",
+			"audio_params": map[string]any{
+				"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
+			},
+		}); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		if hello["type"] != "hello" {
+			conn.Close()
+			t.Fatalf("unexpected hello: %#v", hello)
+		}
+		return conn
+	}
+
+	conn := connect()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var gotStart, gotSentence, gotAudio, gotStop bool
+	for !gotStop {
+		messageType, payload, err := conn.ReadMessage()
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		if messageType == websocket.BinaryMessage {
+			gotAudio = true
+			continue
+		}
+		var message map[string]any
+		if json.Unmarshal(payload, &message) != nil || message["type"] != "tts" {
+			continue
+		}
+		switch message["state"] {
+		case "start":
+			gotStart = true
+		case "sentence_start":
+			gotSentence = message["text"] == farewell
+		case "stop":
+			gotStop = true
+		}
+	}
+	if !gotStart || !gotSentence || !gotAudio || !gotStop {
+		t.Fatalf("idle farewell states: start=%v sentence=%v audio=%v stop=%v",
+			gotStart, gotSentence, gotAudio, gotStop)
+	}
+
+	var closed bool
+	for !closed {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			closed = true
+		}
+	}
+	conn.Close()
+
+	reconnected := connect()
+	reconnected.Close()
+}
 
 func TestXiaozhiOTAAndVoiceRoundTrip(t *testing.T) {
 	const deviceID = "02:00:00:00:00:01"

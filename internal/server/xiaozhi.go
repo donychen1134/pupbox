@@ -29,9 +29,13 @@ type xiaozhiVoiceProvider interface {
 }
 
 type xiaozhiConfig struct {
-	enabled  bool
-	deviceID string
-	wsURL    string
+	enabled     bool
+	deviceID    string
+	wsURL       string
+	idleTimeout time.Duration
+	farewell    string
+	volumeMin   int
+	volumeMax   int
 }
 
 type xiaozhiClientHello struct {
@@ -70,6 +74,7 @@ type xiaozhiConnection struct {
 	writeMu     sync.Mutex
 	deviceMu    sync.Mutex
 	turnMu      sync.Mutex
+	activityMu  sync.Mutex
 	mcpID       int64
 	statusMCPID int64
 	volume      int
@@ -79,6 +84,20 @@ type xiaozhiConnection struct {
 	audioBytes  int64
 	audioFrames int64
 	turnCancel  context.CancelFunc
+	lastActive  time.Time
+	turnActive  bool
+	idleClosing bool
+}
+
+type xiaozhiDeviceStatus struct {
+	Connected    bool   `json:"connected"`
+	ConnectedAt  string `json:"connected_at,omitempty"`
+	LastSeenAt   string `json:"last_seen_at,omitempty"`
+	Volume       int    `json:"volume,omitempty"`
+	VolumeKnown  bool   `json:"volume_known"`
+	Battery      int    `json:"battery,omitempty"`
+	BatteryKnown bool   `json:"battery_known"`
+	Charging     bool   `json:"charging"`
 }
 
 var xiaozhiUpgrader = websocket.Upgrader{
@@ -209,8 +228,14 @@ func (c *xiaozhiConnection) run() {
 		return
 	}
 	c.requestDeviceStatus()
+	c.touchActivity()
+	go c.watchProductIdle()
+	c.server.markXiaozhiConnected()
 	c.server.log.Info("xiaozhi websocket connected", "session_id", c.sessionID)
-	defer c.server.log.Info("xiaozhi websocket disconnected", "session_id", c.sessionID)
+	defer func() {
+		c.server.markXiaozhiDisconnected()
+		c.server.log.Info("xiaozhi websocket disconnected", "session_id", c.sessionID)
+	}()
 
 	asrDone := make(chan error, 1)
 	go func() {
@@ -230,6 +255,7 @@ func (c *xiaozhiConnection) run() {
 		}
 		switch messageType {
 		case websocket.BinaryMessage:
+			c.touchActivity()
 			c.noteAudio(len(payload))
 			packet := append([]byte(nil), payload...)
 			select {
@@ -248,6 +274,7 @@ func (c *xiaozhiConnection) run() {
 			switch message.Type {
 			case "listen":
 				if message.State == "start" || message.State == "detect" {
+					c.touchActivity()
 					c.beginTurn()
 				}
 			case "abort":
@@ -266,11 +293,46 @@ func (c *xiaozhiConnection) run() {
 	}
 }
 
+func (s *Server) markXiaozhiConnected() {
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.xiaozhiMu.Lock()
+	s.xiaozhiInfo.Connected = true
+	s.xiaozhiInfo.ConnectedAt = now
+	s.xiaozhiInfo.LastSeenAt = now
+	s.xiaozhiMu.Unlock()
+}
+
+func (s *Server) markXiaozhiDisconnected() {
+	s.xiaozhiMu.Lock()
+	s.xiaozhiInfo.Connected = false
+	s.xiaozhiInfo.LastSeenAt = time.Now().UTC().Format(time.RFC3339)
+	s.xiaozhiMu.Unlock()
+}
+
+func (s *Server) updateXiaozhiDeviceStatus(volume int, volumeKnown bool, battery int, batteryKnown, charging bool) {
+	s.xiaozhiMu.Lock()
+	s.xiaozhiInfo.Volume = volume
+	s.xiaozhiInfo.VolumeKnown = volumeKnown
+	s.xiaozhiInfo.Battery = battery
+	s.xiaozhiInfo.BatteryKnown = batteryKnown
+	s.xiaozhiInfo.Charging = charging
+	s.xiaozhiInfo.LastSeenAt = time.Now().UTC().Format(time.RFC3339)
+	s.xiaozhiMu.Unlock()
+}
+
+func (s *Server) xiaozhiDeviceSnapshot() (xiaozhiDeviceStatus, bool) {
+	s.xiaozhiMu.RLock()
+	defer s.xiaozhiMu.RUnlock()
+	return s.xiaozhiInfo, s.xiaozhiInfo.LastSeenAt != ""
+}
+
 func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
 	}
+	c.beginResponse()
+	defer c.endResponse()
 
 	turnCtx, cancel := context.WithCancel(c.ctx)
 	c.setCurrentTurn(cancel)
@@ -382,6 +444,107 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 		c.server.log.Warn("xiaozhi TTS failed", "trace_id", traceID, "error", ttsErr)
 	}
 	return nil
+}
+
+func (c *xiaozhiConnection) touchActivity() {
+	c.activityMu.Lock()
+	c.lastActive = time.Now()
+	c.activityMu.Unlock()
+}
+
+func (c *xiaozhiConnection) beginResponse() {
+	c.activityMu.Lock()
+	c.lastActive = time.Now()
+	c.turnActive = true
+	c.activityMu.Unlock()
+}
+
+func (c *xiaozhiConnection) endResponse() {
+	c.activityMu.Lock()
+	c.lastActive = time.Now()
+	c.turnActive = false
+	c.activityMu.Unlock()
+}
+
+func (c *xiaozhiConnection) watchProductIdle() {
+	timeout := c.server.xiaozhi.idleTimeout
+	if timeout <= 0 {
+		return
+	}
+	interval := min(timeout/4, time.Second)
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			if !c.claimIdleClose(timeout) {
+				continue
+			}
+			c.sayFarewellAndClose()
+			return
+		}
+	}
+}
+
+func (c *xiaozhiConnection) claimIdleClose(timeout time.Duration) bool {
+	c.activityMu.Lock()
+	defer c.activityMu.Unlock()
+	if c.idleClosing || c.turnActive || c.lastActive.IsZero() || time.Since(c.lastActive) < timeout {
+		return false
+	}
+	c.idleClosing = true
+	c.turnActive = true
+	return true
+}
+
+func (c *xiaozhiConnection) sayFarewellAndClose() {
+	farewell := c.server.xiaozhi.farewell
+	if farewell == "" {
+		farewell = "豆豆要休息一会儿啦，下次再来找我玩，拜拜。"
+	}
+	c.server.log.Info("xiaozhi product session idle", "session_id", c.sessionID)
+
+	_ = c.writeJSON(map[string]any{
+		"session_id": c.sessionID,
+		"type":       "tts",
+		"state":      "start",
+	})
+	_ = c.writeJSON(map[string]any{
+		"session_id": c.sessionID,
+		"type":       "tts",
+		"state":      "sentence_start",
+		"text":       farewell,
+	})
+	if err := c.streamSpeechOpus(c.ctx, farewell, nil); err != nil && !errors.Is(err, context.Canceled) {
+		c.server.log.Warn("xiaozhi idle farewell failed", "session_id", c.sessionID, "error", err)
+	}
+	_ = c.writeJSON(map[string]any{
+		"session_id": c.sessionID,
+		"type":       "tts",
+		"state":      "stop",
+	})
+
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-c.ctx.Done():
+		return
+	case <-timer.C:
+	}
+	c.writeMu.Lock()
+	_ = c.conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "product session idle"),
+		time.Now().Add(time.Second),
+	)
+	_ = c.conn.Close()
+	c.writeMu.Unlock()
 }
 
 func (c *xiaozhiConnection) beginTurn() {

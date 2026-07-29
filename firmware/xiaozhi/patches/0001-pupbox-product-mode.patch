@@ -1,0 +1,268 @@
+diff --git a/main/Kconfig.projbuild b/main/Kconfig.projbuild
+index a1bb6e3..f7eaffa 100644
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -6,6 +6,20 @@ config OTA_URL
+     help
+         The application will access this URL to check for new firmwares and server address.
+
++config FORCE_DEFAULT_OTA_URL
++    bool "Always use the default OTA URL"
++    default n
++    help
++        Ignore an OTA URL saved during Wi-Fi provisioning. This is intended for
++        self-hosted builds that must always use their compiled server address.
++
++config PUPBOX_PRODUCT_MODE
++    bool "Enable Pupbox product behavior"
++    default n
++    help
++        Enable safe volume, battery monitoring, idle power saving, and disable
++        the camera so GPIO1 can be used for the battery ADC.
++
+ choice
+     prompt "Flash Assets"
+     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
+diff --git a/main/boards/waveshare/esp32-s3-audio-board/config.h b/main/boards/waveshare/esp32-s3-audio-board/config.h
+index 958cb89..98f3fa4 100644
+--- a/main/boards/waveshare/esp32-s3-audio-board/config.h
++++ b/main/boards/waveshare/esp32-s3-audio-board/config.h
+@@ -10,6 +10,11 @@
+ #define BOOT_BUTTON_GPIO            GPIO_NUM_0
+ #define BUILTIN_LED_GPIO            GPIO_NUM_38
+
++#define BATTERY_ADC_UNIT            ADC_UNIT_1
++#define BATTERY_ADC_CHANNEL         ADC_CHANNEL_0
++#define BATTERY_ADC_UPPER_RESISTOR  200000
++#define BATTERY_ADC_LOWER_RESISTOR  100000
++
+ #define AUDIO_I2S_GPIO_MCLK         GPIO_NUM_12
+ #define AUDIO_I2S_GPIO_BCLK         GPIO_NUM_13
+ #define AUDIO_I2S_GPIO_WS           GPIO_NUM_14
+@@ -92,4 +97,4 @@
+
+
+
+-#endif // _BOARD_CONFIG_H_
+\ No newline at end of file
++#endif // _BOARD_CONFIG_H_
+diff --git a/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc b/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc
+index e983fb4..b763611 100644
+--- a/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc
++++ b/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc
+@@ -5,6 +5,9 @@
+ #include "application.h"
+ #include "button.h"
+ #include "config.h"
++#include "adc_battery_monitor.h"
++#include "power_save_timer.h"
++#include "assets/lang_config.h"
+
+ #include <esp_log.h>
+ #include "i2c_device.h"
+@@ -14,6 +17,9 @@
+ #include <esp_lcd_panel_ops.h>
+ #include <esp_lcd_st77916.h>
+ #include <esp_timer.h>
++#include <esp_sleep.h>
++#include <driver/rtc_io.h>
++#include <algorithm>
+ #include "esp_io_expander_tca95xx_16bit.h"
+ #include "esp_video.h"
+ #include "led/circular_strip.h"
+@@ -21,6 +27,30 @@
+
+ #define TAG "waveshare_s3_audio_board"
+
++#if CONFIG_PUPBOX_PRODUCT_MODE
++namespace {
++constexpr int kSafeMaximumVolume = 75;
++constexpr int kCriticalBatteryLevel = 5;
++constexpr int kCriticalBatterySamples = 10;
++
++class SafeBoxAudioCodec : public BoxAudioCodec {
++public:
++    using BoxAudioCodec::BoxAudioCodec;
++
++    void Start() override {
++        BoxAudioCodec::Start();
++        if (output_volume() > kSafeMaximumVolume) {
++            BoxAudioCodec::SetOutputVolume(kSafeMaximumVolume);
++        }
++    }
++
++    void SetOutputVolume(int volume) override {
++        BoxAudioCodec::SetOutputVolume(std::min(volume, kSafeMaximumVolume));
++    }
++};
++}  // namespace
++#endif
++
+ #define LCD_OPCODE_WRITE_CMD        (0x02ULL)
+ #define LCD_OPCODE_READ_CMD         (0x0BULL)
+ #define LCD_OPCODE_WRITE_COLOR      (0x32ULL)
+@@ -32,6 +62,12 @@ private:
+     esp_io_expander_handle_t io_expander = NULL;
+     LcdDisplay* display_;
+     EspVideo* camera_;
++#if CONFIG_PUPBOX_PRODUCT_MODE
++    AdcBatteryMonitor* battery_monitor_ = nullptr;
++    PowerSaveTimer* power_save_timer_ = nullptr;
++    esp_timer_handle_t battery_timer_ = nullptr;
++    int critical_battery_samples_ = 0;
++#endif
+
+     void InitializeI2c() {
+         // Initialize I2C peripheral
+@@ -146,6 +182,9 @@ private:
+
+     void InitializeButtons() {
+         boot_button_.OnClick([this]() {
++#if CONFIG_PUPBOX_PRODUCT_MODE
++            power_save_timer_->WakeUp();
++#endif
+             auto& app = Application::GetInstance();
+             if (app.GetDeviceState() == kDeviceStateStarting) {
+                 EnterWifiConfigMode();
+@@ -155,6 +194,70 @@ private:
+         });
+     }
+
++#if CONFIG_PUPBOX_PRODUCT_MODE
++    void InitializeProductMode() {
++        battery_monitor_ = new AdcBatteryMonitor(
++            BATTERY_ADC_UNIT,
++            BATTERY_ADC_CHANNEL,
++            BATTERY_ADC_UPPER_RESISTOR,
++            BATTERY_ADC_LOWER_RESISTOR);
++
++        power_save_timer_ = new PowerSaveTimer(240, 30, -1);
++        power_save_timer_->OnEnterSleepMode([this]() {
++            ESP_LOGI(TAG, "Product idle sleep enabled");
++            GetBacklight()->SetBrightness(0, false);
++        });
++        power_save_timer_->OnExitSleepMode([this]() {
++            ESP_LOGI(TAG, "Product idle sleep disabled");
++            GetBacklight()->RestoreBrightness();
++        });
++        power_save_timer_->SetEnabled(true);
++
++        esp_timer_create_args_t timer_args = {
++            .callback = [](void* arg) {
++                static_cast<CustomBoard*>(arg)->CheckCriticalBattery();
++            },
++            .arg = this,
++            .dispatch_method = ESP_TIMER_TASK,
++            .name = "pupbox_battery",
++            .skip_unhandled_events = true,
++        };
++        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &battery_timer_));
++        ESP_ERROR_CHECK(esp_timer_start_periodic(battery_timer_, 30 * 1000 * 1000));
++    }
++
++    void CheckCriticalBattery() {
++        int level = battery_monitor_->GetBatteryLevel();
++        bool charging = battery_monitor_->IsCharging();
++        ESP_LOGI(TAG, "Battery level=%d charging=%s", level, charging ? "true" : "false");
++
++        // A zero reading also represents an unplugged battery on this board.
++        if (level > 0 && level <= kCriticalBatteryLevel && !charging) {
++            critical_battery_samples_++;
++        } else {
++            critical_battery_samples_ = 0;
++        }
++        if (critical_battery_samples_ < kCriticalBatterySamples) {
++            return;
++        }
++
++        ESP_LOGW(TAG, "Critical battery confirmed, entering deep sleep");
++        Application::GetInstance().Alert(
++            Lang::Strings::BATTERY_LOW,
++            Lang::Strings::BATTERY_NEED_CHARGE,
++            "battery",
++            Lang::Sounds::OGG_LOW_BATTERY);
++        vTaskDelay(pdMS_TO_TICKS(2500));
++        GetAudioCodec()->EnableOutput(false);
++        GetBacklight()->SetBrightness(0, false);
++        esp_io_expander_set_level(io_expander, IO_EXPANDER_PIN_NUM_8, 0);
++        ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(BOOT_BUTTON_GPIO, 0));
++        rtc_gpio_pullup_en(BOOT_BUTTON_GPIO);
++        rtc_gpio_pulldown_dis(BOOT_BUTTON_GPIO);
++        esp_deep_sleep_start();
++    }
++#endif
++
+     void InitializeCamera() {
+         static esp_cam_ctlr_dvp_pin_config_t dvp_pin_config = {
+             .data_width = CAM_CTLR_DATA_WIDTH_8,
+@@ -207,7 +310,12 @@ public:
+         #else
+         InitializeSt7789Display();
+         #endif
++#if CONFIG_PUPBOX_PRODUCT_MODE
++        camera_ = nullptr;
++        InitializeProductMode();
++#else
+         InitializeCamera();
++#endif
+         GetBacklight()->RestoreBrightness();
+     }
+
+@@ -217,8 +325,13 @@ public:
+     }
+
+     virtual AudioCodec* GetAudioCodec() override {
++#if CONFIG_PUPBOX_PRODUCT_MODE
++        static SafeBoxAudioCodec audio_codec(i2c_bus_, AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
++            AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS, AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, AUDIO_CODEC_PA_PIN, AUDIO_CODEC_ES8311_ADDR, AUDIO_CODEC_ES7210_ADDR, AUDIO_INPUT_REFERENCE);
++#else
+         static BoxAudioCodec audio_codec(i2c_bus_, AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
+             AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS, AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, AUDIO_CODEC_PA_PIN, AUDIO_CODEC_ES8311_ADDR, AUDIO_CODEC_ES7210_ADDR, AUDIO_INPUT_REFERENCE);
++#endif
+             return &audio_codec;
+     }
+
+@@ -234,6 +347,22 @@ public:
+     virtual Camera* GetCamera() override {
+         return camera_;
+     }
++
++#if CONFIG_PUPBOX_PRODUCT_MODE
++    virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
++        level = battery_monitor_->GetBatteryLevel();
++        charging = battery_monitor_->IsCharging();
++        discharging = !charging;
++        return true;
++    }
++
++    virtual void SetPowerSaveLevel(PowerSaveLevel level) override {
++        if (level != PowerSaveLevel::LOW_POWER) {
++            power_save_timer_->WakeUp();
++        }
++        WifiBoard::SetPowerSaveLevel(level);
++    }
++#endif
+ };
+
+ DECLARE_BOARD(CustomBoard);
+diff --git a/main/ota.cc b/main/ota.cc
+index bcc0dc5..3b5233d 100644
+--- a/main/ota.cc
++++ b/main/ota.cc
+@@ -44,12 +44,16 @@ Ota::~Ota() {
+ }
+
+ std::string Ota::GetCheckVersionUrl() {
++#if CONFIG_FORCE_DEFAULT_OTA_URL
++    return CONFIG_OTA_URL;
++#else
+     Settings settings("wifi", false);
+     std::string url = settings.GetString("ota_url");
+     if (url.empty()) {
+         url = CONFIG_OTA_URL;
+     }
+     return url;
++#endif
+ }
+
+ std::unique_ptr<Http> Ota::SetupHttp() {

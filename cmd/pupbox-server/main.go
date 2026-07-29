@@ -40,6 +40,10 @@ func main() {
 		EnableXiaozhi:    envBool("PUPBOX_XIAOZHI_ENABLED", false),
 		XiaozhiDeviceID:  os.Getenv("PUPBOX_XIAOZHI_DEVICE_ID"),
 		XiaozhiWSURL:     os.Getenv("PUPBOX_XIAOZHI_WS_URL"),
+		XiaozhiIdleTime:  time.Duration(envInt("PUPBOX_XIAOZHI_IDLE_SECONDS", 120)) * time.Second,
+		XiaozhiFarewell:  envDefault("PUPBOX_XIAOZHI_FAREWELL", "豆豆要休息一会儿啦，下次再来找我玩，拜拜。"),
+		XiaozhiVolumeMin: envInt("PUPBOX_XIAOZHI_VOLUME_MIN", 20),
+		XiaozhiVolumeMax: envInt("PUPBOX_XIAOZHI_VOLUME_MAX", 75),
 		Logger:           logger,
 	})
 	runCtx, cancelRun := context.WithCancel(context.Background())
