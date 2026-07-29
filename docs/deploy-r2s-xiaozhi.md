@@ -54,6 +54,8 @@ logread -e pupbox
 1. 为微雪板增加独立构建变体。
 2. 将 `CONFIG_OTA_URL` 指向 R2S 的 `/xiaozhi/ota/`。
 3. 启用 `CONFIG_FORCE_DEFAULT_OTA_URL=y`，避免配网 NVS 里的旧服务地址覆盖自建地址。
+4. 启用产品模式的安全音量、电池监测、空闲休眠和按键恢复。
+5. 使用 MultiNet7 在板端识别“豆豆你好”和“小狗豆豆”。
 
 仓库中的 `firmware/xiaozhi/patches/0001-pupbox-product-mode.patch` 保存上游源码改动，`firmware/xiaozhi/config.pupbox.example.json` 保存不含真实地址和密钥的板型模板。将模板复制到小智板型目录、改成 R2S 的固定 LAN 地址后再构建。
 
@@ -69,6 +71,14 @@ logread -e pupbox
       "sdkconfig_append": [
         "CONFIG_OTA_URL=\"http://192.168.1.2:8791/xiaozhi/ota/\"",
         "CONFIG_FORCE_DEFAULT_OTA_URL=y",
+        "CONFIG_PUPBOX_PRODUCT_MODE=y",
+        "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+        "CONFIG_CUSTOM_WAKE_WORD=\"dou dou ni hao\"",
+        "CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"豆豆你好\"",
+        "CONFIG_CUSTOM_WAKE_WORD_2=\"xiao gou dou dou\"",
+        "CONFIG_CUSTOM_WAKE_WORD_DISPLAY_2=\"小狗豆豆\"",
+        "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=20",
+        "CONFIG_SR_MN_CN_MULTINET7_QUANT=y",
         "CONFIG_USE_WECHAT_MESSAGE_STYLE=y"
       ]
     }
@@ -76,7 +86,9 @@ logread -e pupbox
 }
 ```
 
-`FORCE_DEFAULT_OTA_URL` 是 Pupbox 对上游源码增加的布尔配置。`Ota::GetCheckVersionUrl()` 在该选项启用时直接返回 `CONFIG_OTA_URL`；关闭时保持小智原有的配网覆盖行为。
+`FORCE_DEFAULT_OTA_URL` 是 Pupbox 对上游源码增加的布尔配置。`Ota::GetCheckVersionUrl()` 在该选项启用时直接返回 `CONFIG_OTA_URL`；关闭时保持小智原有的配网覆盖行为。两个唤醒词使用不带声调、以空格分隔的拼音写入 MultiNet7；显示文本则作为唤醒后发给服务端的第一句话。
+
+产品模式将扬声器音量硬限制为 75，定期读取板载电池 ADC，并在连续确认低电量后提示和深度休眠。无活动时先关闭屏幕和音频；短按 `BOOT` 可恢复。充电状态由电压趋势估算，不等同于独立充电管理芯片的硬件状态脚。
 
 构建与烧录：
 

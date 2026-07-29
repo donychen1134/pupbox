@@ -1,11 +1,11 @@
 diff --git a/main/Kconfig.projbuild b/main/Kconfig.projbuild
-index a1bb6e3..f7eaffa 100644
+index a1bb6e3..e3e395e 100644
 --- a/main/Kconfig.projbuild
 +++ b/main/Kconfig.projbuild
 @@ -6,6 +6,20 @@ config OTA_URL
      help
          The application will access this URL to check for new firmwares and server address.
-
+ 
 +config FORCE_DEFAULT_OTA_URL
 +    bool "Always use the default OTA URL"
 +    default n
@@ -23,6 +23,43 @@ index a1bb6e3..f7eaffa 100644
  choice
      prompt "Flash Assets"
      default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
+@@ -848,6 +862,20 @@ config CUSTOM_WAKE_WORD_DISPLAY
+     help
+         Greeting sent to the server after wake word detection
+ 
++config CUSTOM_WAKE_WORD_2
++    string "Second Custom Wake Word"
++    default ""
++    depends on USE_CUSTOM_WAKE_WORD
++    help
++        Optional second custom wake word, in pinyin separated by spaces
++
++config CUSTOM_WAKE_WORD_DISPLAY_2
++    string "Second Custom Wake Word Display"
++    default ""
++    depends on USE_CUSTOM_WAKE_WORD
++    help
++        Greeting sent to the server for the second custom wake word
++
+ config CUSTOM_WAKE_WORD_THRESHOLD
+     int "Custom Wake Word Threshold (%)"
+     default 20
+diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/custom_wake_word.cc
+index 681d02c..f1c3c62 100644
+--- a/main/audio/wake_words/custom_wake_word.cc
++++ b/main/audio/wake_words/custom_wake_word.cc
+@@ -93,6 +93,11 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list)
+ #ifdef CONFIG_CUSTOM_WAKE_WORD
+         threshold_ = CONFIG_CUSTOM_WAKE_WORD_THRESHOLD / 100.0f;
+         commands_.push_back({CONFIG_CUSTOM_WAKE_WORD, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake"});
++#ifdef CONFIG_CUSTOM_WAKE_WORD_2
++        if (CONFIG_CUSTOM_WAKE_WORD_2[0] != '\0') {
++            commands_.push_back({CONFIG_CUSTOM_WAKE_WORD_2, CONFIG_CUSTOM_WAKE_WORD_DISPLAY_2, "wake"});
++        }
++#endif
+ #endif
+     } else {
+         models_ = models_list;
 diff --git a/main/boards/waveshare/esp32-s3-audio-board/config.h b/main/boards/waveshare/esp32-s3-audio-board/config.h
 index 958cb89..98f3fa4 100644
 --- a/main/boards/waveshare/esp32-s3-audio-board/config.h
@@ -30,7 +67,7 @@ index 958cb89..98f3fa4 100644
 @@ -10,6 +10,11 @@
  #define BOOT_BUTTON_GPIO            GPIO_NUM_0
  #define BUILTIN_LED_GPIO            GPIO_NUM_38
-
+ 
 +#define BATTERY_ADC_UNIT            ADC_UNIT_1
 +#define BATTERY_ADC_CHANNEL         ADC_CHANNEL_0
 +#define BATTERY_ADC_UPPER_RESISTOR  200000
@@ -40,9 +77,9 @@ index 958cb89..98f3fa4 100644
  #define AUDIO_I2S_GPIO_BCLK         GPIO_NUM_13
  #define AUDIO_I2S_GPIO_WS           GPIO_NUM_14
 @@ -92,4 +97,4 @@
-
-
-
+ 
+ 
+ 
 -#endif // _BOARD_CONFIG_H_
 \ No newline at end of file
 +#endif // _BOARD_CONFIG_H_
@@ -57,7 +94,7 @@ index e983fb4..b763611 100644
 +#include "adc_battery_monitor.h"
 +#include "power_save_timer.h"
 +#include "assets/lang_config.h"
-
+ 
  #include <esp_log.h>
  #include "i2c_device.h"
 @@ -14,6 +17,9 @@
@@ -71,9 +108,9 @@ index e983fb4..b763611 100644
  #include "esp_video.h"
  #include "led/circular_strip.h"
 @@ -21,6 +27,30 @@
-
+ 
  #define TAG "waveshare_s3_audio_board"
-
+ 
 +#if CONFIG_PUPBOX_PRODUCT_MODE
 +namespace {
 +constexpr int kSafeMaximumVolume = 75;
@@ -111,11 +148,11 @@ index e983fb4..b763611 100644
 +    esp_timer_handle_t battery_timer_ = nullptr;
 +    int critical_battery_samples_ = 0;
 +#endif
-
+ 
      void InitializeI2c() {
          // Initialize I2C peripheral
 @@ -146,6 +182,9 @@ private:
-
+ 
      void InitializeButtons() {
          boot_button_.OnClick([this]() {
 +#if CONFIG_PUPBOX_PRODUCT_MODE
@@ -127,7 +164,7 @@ index e983fb4..b763611 100644
 @@ -155,6 +194,70 @@ private:
          });
      }
-
+ 
 +#if CONFIG_PUPBOX_PRODUCT_MODE
 +    void InitializeProductMode() {
 +        battery_monitor_ = new AdcBatteryMonitor(
@@ -197,7 +234,7 @@ index e983fb4..b763611 100644
              .data_width = CAM_CTLR_DATA_WIDTH_8,
 @@ -207,7 +310,12 @@ public:
          #else
-         InitializeSt7789Display();
+         InitializeSt7789Display(); 
          #endif
 +#if CONFIG_PUPBOX_PRODUCT_MODE
 +        camera_ = nullptr;
@@ -207,10 +244,10 @@ index e983fb4..b763611 100644
 +#endif
          GetBacklight()->RestoreBrightness();
      }
-
+ 
 @@ -217,8 +325,13 @@ public:
      }
-
+ 
      virtual AudioCodec* GetAudioCodec() override {
 +#if CONFIG_PUPBOX_PRODUCT_MODE
 +        static SafeBoxAudioCodec audio_codec(i2c_bus_, AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
@@ -221,7 +258,7 @@ index e983fb4..b763611 100644
 +#endif
              return &audio_codec;
      }
-
+ 
 @@ -234,6 +347,22 @@ public:
      virtual Camera* GetCamera() override {
          return camera_;
@@ -243,7 +280,7 @@ index e983fb4..b763611 100644
 +    }
 +#endif
  };
-
+ 
  DECLARE_BOARD(CustomBoard);
 diff --git a/main/ota.cc b/main/ota.cc
 index bcc0dc5..3b5233d 100644
@@ -251,7 +288,7 @@ index bcc0dc5..3b5233d 100644
 +++ b/main/ota.cc
 @@ -44,12 +44,16 @@ Ota::~Ota() {
  }
-
+ 
  std::string Ota::GetCheckVersionUrl() {
 +#if CONFIG_FORCE_DEFAULT_OTA_URL
 +    return CONFIG_OTA_URL;
@@ -264,5 +301,76 @@ index bcc0dc5..3b5233d 100644
      return url;
 +#endif
  }
-
+ 
  std::unique_ptr<Http> Ota::SetupHttp() {
+diff --git a/scripts/build_default_assets.py b/scripts/build_default_assets.py
+index 6d4cacb..5921d42 100755
+--- a/scripts/build_default_assets.py
++++ b/scripts/build_default_assets.py
+@@ -592,6 +592,12 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
+                 # Extract string value (remove quotes)
+                 value = line.split('=', 1)[1].strip('"')
+                 config_values['display'] = value
++            elif 'CONFIG_CUSTOM_WAKE_WORD_2=' in line and not line.startswith('#'):
++                value = line.split('=', 1)[1].strip('"')
++                config_values['wake_word_2'] = value
++            elif 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY_2=' in line and not line.startswith('#'):
++                value = line.split('=', 1)[1].strip('"')
++                config_values['display_2'] = value
+             elif 'CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=' in line and not line.startswith('#'):
+                 # Extract numeric value
+                 value = line.split('=', 1)[1]
+@@ -609,11 +615,15 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
+         'wake_word' in config_values and 
+         'display' in config_values and 
+         'threshold' in config_values):
+-        return {
++        result = {
+             'wake_word': config_values['wake_word'],
+             'display': config_values['display'],
+             'threshold': config_values['threshold'] / 100.0  # Convert to decimal (20 -> 0.2)
+         }
++        if config_values.get('wake_word_2') and config_values.get('display_2'):
++            result['wake_word_2'] = config_values['wake_word_2']
++            result['display_2'] = config_values['display_2']
++        return result
+     
+     return None
+ 
+@@ -896,19 +906,29 @@ def main():
+         language = get_language_from_multinet_models(multinet_model_names)
+         
+         # Build multinet_model info structure
++        commands = [
++            {
++                "command": custom_wake_word_config['wake_word'],
++                "text": custom_wake_word_config['display'],
++                "action": "wake"
++            }
++        ]
++        if custom_wake_word_config.get('wake_word_2'):
++            commands.append({
++                "command": custom_wake_word_config['wake_word_2'],
++                "text": custom_wake_word_config['display_2'],
++                "action": "wake"
++            })
++
+         multinet_model_info = {
+             "language": language,
+             "duration": 3000,  # Default duration in ms
+             "threshold": custom_wake_word_config['threshold'],
+-            "commands": [
+-                {
+-                    "command": custom_wake_word_config['wake_word'],
+-                    "text": custom_wake_word_config['display'],
+-                    "action": "wake"
+-                }
+-            ]
++            "commands": commands
+         }
+         print(f"  custom wake word: {custom_wake_word_config['wake_word']} ({custom_wake_word_config['display']})")
++        if custom_wake_word_config.get('wake_word_2'):
++            print(f"  custom wake word: {custom_wake_word_config['wake_word_2']} ({custom_wake_word_config['display_2']})")
+         print(f"  wake word language: {language}")
+         print(f"  wake word threshold: {custom_wake_word_config['threshold']}")
+     
