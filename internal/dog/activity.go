@@ -26,6 +26,7 @@ var activitySequences = map[string]*atomic.Uint64{
 	"presence":      {},
 	"greeting":      {},
 	"farewell":      {},
+	"quiet":         {},
 	"chat":          {},
 }
 
@@ -170,6 +171,13 @@ func Activities() []Activity {
 			Category: "chat",
 		},
 		{
+			ID:       "quiet",
+			Label:    "安静",
+			Prompt:   "豆豆安静",
+			Reply:    "好，豆豆安静啦。想说话时再叫我。",
+			Category: "chat",
+		},
+		{
 			ID:       "presence",
 			Label:    "陪伴",
 			Prompt:   "豆豆在做什么",
@@ -205,6 +213,8 @@ func PlanActivity(text string) (Activity, bool) {
 	}
 
 	switch {
+	case isQuietIntent(normalized):
+		return byID("quiet")
 	case isFarewellIntent(normalized):
 		return byID("farewell")
 	case containsAny(normalized, "你还会干啥", "你还会干什么", "你还会做什么", "你会做什么", "你会干啥", "你会干什么", "你能做什么", "你能干啥", "可以玩什么", "有什么好玩", "都会什么") ||
@@ -694,6 +704,11 @@ func isFarewellIntent(text string) bool {
 		(strings.Contains(text, "再见") && utf8.RuneCountInString(text) <= 24)
 }
 
+func isQuietIntent(text string) bool {
+	return equalsAny(text, "闭嘴", "闭嘴吧", "安静", "安静吧", "停", "停下", "停一下", "别说了", "不要说了", "先别说话") ||
+		(utf8.RuneCountInString(text) <= 16 && containsAny(text, "安静一下", "安静一会", "别讲话", "不要讲话"))
+}
+
 func hasPendingStoryOffer(history []Turn) bool {
 	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
 		reply := normalizeToddlerIntentText(history[i].Reply)
@@ -1094,6 +1109,13 @@ var activityReplyVariants = map[string][]string{
 		"晚安呀，豆豆也要闭上眼睛休息啦。",
 		"好，今天先玩到这里。豆豆跟你说再见。",
 		"拜拜啦，豆豆把今天的开心收好啦。",
+	},
+	"quiet": {
+		"好，豆豆安静啦。想说话时再叫我。",
+		"好呀，豆豆先不说话啦。需要我时再叫豆豆。",
+		"收到，豆豆安静地等你。下次想聊天时再叫我。",
+		"嗯，豆豆把声音收起来啦。你叫我时我再来。",
+		"好，豆豆先安安静静的。等你想聊天再叫我。",
 	},
 	"chat": {
 		"好呀，豆豆在听你说。",

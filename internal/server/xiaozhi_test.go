@@ -9,8 +9,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/donychen1134/pupbox/internal/dog"
 	"github.com/gorilla/websocket"
 )
+
+func TestEndingActivity(t *testing.T) {
+	for _, test := range []struct {
+		activity *dog.Activity
+		want     bool
+	}{
+		{activity: &dog.Activity{ID: "farewell"}, want: true},
+		{activity: &dog.Activity{ID: "quiet"}, want: true},
+		{activity: &dog.Activity{ID: "story"}, want: false},
+		{activity: nil, want: false},
+	} {
+		if got := endingActivity(test.activity); got != test.want {
+			t.Errorf("endingActivity(%#v) = %v, want %v", test.activity, got, test.want)
+		}
+	}
+}
 
 func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 	const deviceID = "02:00:00:00:00:01"

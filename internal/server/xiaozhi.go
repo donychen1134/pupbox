@@ -498,10 +498,15 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 	if ttsErr != nil && !errors.Is(ttsErr, context.Canceled) {
 		c.server.log.Warn("xiaozhi TTS failed", "trace_id", traceID, "error", ttsErr)
 	}
-	if activityID(activity) == "farewell" {
-		c.closeProductSession("explicit farewell")
+	if endingActivity(activity) {
+		c.closeProductSession("explicit session end")
 	}
 	return nil
+}
+
+func endingActivity(activity *dog.Activity) bool {
+	id := activityID(activity)
+	return id == "farewell" || id == "quiet"
 }
 
 func (c *xiaozhiConnection) touchActivity() {

@@ -71,6 +71,15 @@ func TestPlanActivityFarewell(t *testing.T) {
 	}
 }
 
+func TestPlanActivityQuiet(t *testing.T) {
+	for _, text := range []string{"闭嘴吧", "豆豆安静一下", "小狗别说了", "先别说话"} {
+		got, ok := PlanActivity(text)
+		if !ok || got.ID != "quiet" {
+			t.Errorf("PlanActivity(%q) = %#v ok=%v, want quiet", text, got, ok)
+		}
+	}
+}
+
 func TestPlanActivityDoesNotTreatSleepConversationAsFarewell(t *testing.T) {
 	for _, text := range []string{"我不想睡觉", "你为什么要睡觉", "妈妈在休息"} {
 		if got, ok := PlanActivity(text); ok && got.ID == "farewell" {
