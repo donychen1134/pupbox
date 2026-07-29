@@ -25,6 +25,8 @@ func main() {
 		err = collect(os.Args[2:])
 	case "run":
 		err = run(os.Args[2:])
+	case "qwen-realtime":
+		err = runQwenRealtime(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -36,6 +38,41 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pupbox-replay:", err)
 		os.Exit(1)
 	}
+}
+
+func runQwenRealtime(args []string) error {
+	flags := flag.NewFlagSet("qwen-realtime", flag.ContinueOnError)
+	corpus := flags.String("corpus", "", "private corpus directory")
+	reportPath := flags.String("report", "", "private report JSON path")
+	limit := flags.Int("limit", 5, "maximum recordings to test (max 50)")
+	model := flags.String("model", "qwen-audio-3.0-realtime-flash", "Qwen-Audio Realtime model")
+	voice := flags.String("voice", "longanqian", "Qwen-Audio voice")
+	url := flags.String("url", os.Getenv("PUPBOX_QWEN_AUDIO_REALTIME_URL"), "Realtime WebSocket endpoint")
+	keyEnv := flags.String("key-env", "CHAT_ARCHIVE_QWEN_API_KEY", "environment variable containing the API key")
+	redactText := flags.Bool("redact-text", false, "omit transcripts and replies from the report")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*corpus) == "" {
+		return errors.New("--corpus is required")
+	}
+	apiKey := os.Getenv(*keyEnv)
+	if apiKey == "" && *keyEnv == "CHAT_ARCHIVE_QWEN_API_KEY" {
+		apiKey = os.Getenv("DASHSCOPE_API_KEY")
+	}
+	report, path, err := replay.RunRealtime(context.Background(), replay.RealtimeOptions{
+		APIKey: apiKey, URL: *url, Model: *model, Voice: *voice,
+		CorpusDir: *corpus, Report: *reportPath, Limit: *limit,
+		RedactText: *redactText, Log: os.Stderr,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("report=%s total=%d succeeded=%d failed=%d first_audio_p50=%dms first_audio_p90=%dms total_p50=%dms total_p90=%dms\n",
+		path, report.Summary.Total, report.Summary.Succeeded, report.Summary.Failed,
+		report.Summary.FirstAudioP50MS, report.Summary.FirstAudioP90MS,
+		report.Summary.TotalP50MS, report.Summary.TotalP90MS)
+	return nil
 }
 
 func collect(args []string) error {
@@ -126,6 +163,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   pupbox-replay collect --server URL [--out DIR] [--limit 50]
   pupbox-replay run --server URL --corpus DIR [--report FILE]
+  pupbox-replay qwen-realtime --corpus DIR [--limit 5] [--report FILE]
 
 The access token is read from PUPBOX_ACCESS_TOKEN by default. Raw recordings,
 transcripts, and reports are private artifacts and must not be committed.`)

@@ -409,6 +409,29 @@ reports use private filesystem permissions, but they still contain sensitive
 family data and must never be committed, uploaded to CI, or placed in a shared
 directory.
 
+For an experimental B-side comparison, run the same private WAV corpus directly
+through Qwen-Audio Realtime. Run this on the machine that already holds the
+corpus and API key so recordings do not move between devices:
+
+```bash
+go run ./cmd/pupbox-replay qwen-realtime \
+  --corpus ~/.local/share/pupbox/replay/<timestamp> \
+  --limit 5
+```
+
+This command uses `qwen-audio-3.0-realtime-flash` by default and reports input
+transcription, reply transcript, first-audio latency, total latency, and output
+audio byte count. It does not save returned audio. The experiment bypasses
+Pupbox safety checks and deterministic activities, so its output is for parent
+review only and is never selected by the product path. Set
+`PUPBOX_QWEN_AUDIO_REALTIME_URL` when the API key requires a workspace-specific
+Beijing endpoint.
+
+The Xiaozhi product path streams ASR and Opus TTS and now also streams structured
+Qwen output into sentence-sized TTS requests. Set
+`PUPBOX_XIAOZHI_STREAMING=false` to retain the previous full-response behavior
+during rollback or A/B diagnosis.
+
 ## Parent Validation Checklist
 
 Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html` for child-facing validation.
