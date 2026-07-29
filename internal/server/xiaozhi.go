@@ -498,6 +498,9 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 	if ttsErr != nil && !errors.Is(ttsErr, context.Canceled) {
 		c.server.log.Warn("xiaozhi TTS failed", "trace_id", traceID, "error", ttsErr)
 	}
+	if activityID(activity) == "farewell" {
+		c.closeProductSession("explicit farewell")
+	}
 	return nil
 }
 
@@ -585,6 +588,10 @@ func (c *xiaozhiConnection) sayFarewellAndClose() {
 		"state":      "stop",
 	})
 
+	c.closeProductSession("product session idle")
+}
+
+func (c *xiaozhiConnection) closeProductSession(reason string) {
 	timer := time.NewTimer(250 * time.Millisecond)
 	defer timer.Stop()
 	select {
@@ -595,7 +602,7 @@ func (c *xiaozhiConnection) sayFarewellAndClose() {
 	c.writeMu.Lock()
 	_ = c.conn.WriteControl(
 		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "product session idle"),
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, reason),
 		time.Now().Add(time.Second),
 	)
 	_ = c.conn.Close()

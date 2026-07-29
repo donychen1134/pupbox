@@ -102,6 +102,88 @@ func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 	reconnected.Close()
 }
 
+func TestXiaozhiExplicitFarewellClosesAfterSpeechAndReconnects(t *testing.T) {
+	const deviceID = "02:00:00:00:00:01"
+	srv := New(Config{
+		Voice:           &fakeXiaozhiVoice{transcript: "晚安，我要睡觉了"},
+		AccessToken:     "test-token",
+		EnableXiaozhi:   true,
+		XiaozhiDeviceID: deviceID,
+	})
+	httpServer := httptest.NewServer(srv.Handler())
+	defer httpServer.Close()
+
+	connect := func() *websocket.Conn {
+		t.Helper()
+		headers := http.Header{}
+		headers.Set("Authorization", "Bearer test-token")
+		headers.Set("Device-Id", deviceID)
+		conn, _, err := websocket.DefaultDialer.Dial(
+			"ws"+strings.TrimPrefix(httpServer.URL, "http")+"/xiaozhi/v1/",
+			headers,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.WriteJSON(map[string]any{
+			"type": "hello", "version": 1, "transport": "websocket",
+			"audio_params": map[string]any{
+				"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
+			},
+		}); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		return conn
+	}
+
+	conn := connect()
+	if err := conn.WriteJSON(map[string]any{"type": "listen", "state": "start", "mode": "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte{9, 8, 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var gotFarewell, gotAudio, gotStop bool
+	for !gotStop {
+		messageType, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if messageType == websocket.BinaryMessage {
+			gotAudio = true
+			continue
+		}
+		var message map[string]any
+		if json.Unmarshal(payload, &message) != nil || message["type"] != "tts" {
+			continue
+		}
+		if message["state"] == "sentence_start" {
+			text, _ := message["text"].(string)
+			gotFarewell = strings.Contains(text, "休息") || strings.Contains(text, "再见") ||
+				strings.Contains(text, "拜拜") || strings.Contains(text, "晚安")
+		}
+		gotStop = message["state"] == "stop"
+	}
+	if !gotFarewell || !gotAudio {
+		t.Fatalf("explicit farewell: sentence=%v audio=%v", gotFarewell, gotAudio)
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected websocket to close after explicit farewell")
+	}
+	conn.Close()
+
+	reconnected := connect()
+	reconnected.Close()
+}
+
 func TestXiaozhiOTAAndVoiceRoundTrip(t *testing.T) {
 	const deviceID = "02:00:00:00:00:01"
 	voice := &fakeXiaozhiVoice{}
