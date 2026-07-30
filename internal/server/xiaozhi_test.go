@@ -33,12 +33,13 @@ func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 	const deviceID = "02:00:00:00:00:01"
 	const farewell = "豆豆先休息啦，拜拜。"
 	srv := New(Config{
-		Voice:           &fakeXiaozhiVoice{},
-		AccessToken:     "test-token",
-		EnableXiaozhi:   true,
-		XiaozhiDeviceID: deviceID,
-		XiaozhiIdleTime: 60 * time.Millisecond,
-		XiaozhiFarewell: farewell,
+		Voice:             &fakeXiaozhiVoice{},
+		AccessToken:       "test-token",
+		EnableXiaozhi:     true,
+		XiaozhiDeviceID:   deviceID,
+		XiaozhiIdleTime:   60 * time.Millisecond,
+		XiaozhiFarewell:   farewell,
+		XiaozhiSleepGrace: 25 * time.Millisecond,
 	})
 	httpServer := httptest.NewServer(srv.Handler())
 	defer httpServer.Close()
@@ -78,8 +79,8 @@ func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 
 	conn := connect()
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var gotStart, gotSentence, gotAudio, gotStop bool
-	for !gotStop {
+	var gotStart, gotSentence, gotAudio, gotStop, gotSleep bool
+	for !gotSleep {
 		messageType, payload, err := conn.ReadMessage()
 		if err != nil {
 			conn.Close()
@@ -90,7 +91,14 @@ func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 			continue
 		}
 		var message map[string]any
-		if json.Unmarshal(payload, &message) != nil || message["type"] != "tts" {
+		if json.Unmarshal(payload, &message) != nil {
+			continue
+		}
+		if message["type"] == "pupbox" && message["action"] == "sleep" {
+			gotSleep = int64(message["delay_ms"].(float64)) == 25
+			continue
+		}
+		if message["type"] != "tts" {
 			continue
 		}
 		switch message["state"] {
@@ -102,9 +110,9 @@ func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 			gotStop = true
 		}
 	}
-	if !gotStart || !gotSentence || !gotAudio || !gotStop {
-		t.Fatalf("idle farewell states: start=%v sentence=%v audio=%v stop=%v",
-			gotStart, gotSentence, gotAudio, gotStop)
+	if !gotStart || !gotSentence || !gotAudio || !gotStop || !gotSleep {
+		t.Fatalf("idle farewell states: start=%v sentence=%v audio=%v stop=%v sleep=%v",
+			gotStart, gotSentence, gotAudio, gotStop, gotSleep)
 	}
 
 	var closed bool
@@ -122,10 +130,11 @@ func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 func TestXiaozhiExplicitFarewellClosesAfterSpeechAndReconnects(t *testing.T) {
 	const deviceID = "02:00:00:00:00:01"
 	srv := New(Config{
-		Voice:           &fakeXiaozhiVoice{transcript: "晚安，我要睡觉了"},
-		AccessToken:     "test-token",
-		EnableXiaozhi:   true,
-		XiaozhiDeviceID: deviceID,
+		Voice:             &fakeXiaozhiVoice{transcript: "晚安，我要睡觉了"},
+		AccessToken:       "test-token",
+		EnableXiaozhi:     true,
+		XiaozhiDeviceID:   deviceID,
+		XiaozhiSleepGrace: 25 * time.Millisecond,
 	})
 	httpServer := httptest.NewServer(srv.Handler())
 	defer httpServer.Close()
@@ -191,6 +200,14 @@ func TestXiaozhiExplicitFarewellClosesAfterSpeechAndReconnects(t *testing.T) {
 	}
 	if !gotFarewell || !gotAudio {
 		t.Fatalf("explicit farewell: sentence=%v audio=%v", gotFarewell, gotAudio)
+	}
+	var sleep map[string]any
+	if err := conn.ReadJSON(&sleep); err != nil {
+		t.Fatal(err)
+	}
+	if sleep["type"] != "pupbox" || sleep["action"] != "sleep" ||
+		int64(sleep["delay_ms"].(float64)) != 25 {
+		t.Fatalf("unexpected product sleep request: %#v", sleep)
 	}
 	if _, _, err := conn.ReadMessage(); err == nil {
 		t.Fatal("expected websocket to close after explicit farewell")

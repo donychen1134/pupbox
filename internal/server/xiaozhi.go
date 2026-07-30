@@ -34,6 +34,7 @@ type xiaozhiConfig struct {
 	wsURL       string
 	idleTimeout time.Duration
 	farewell    string
+	sleepGrace  time.Duration
 	volumeMin   int
 	volumeMax   int
 	streaming   bool
@@ -597,6 +598,15 @@ func (c *xiaozhiConnection) sayFarewellAndClose() {
 }
 
 func (c *xiaozhiConnection) closeProductSession(reason string) {
+	if err := c.writeJSON(map[string]any{
+		"type":     "pupbox",
+		"action":   "sleep",
+		"delay_ms": c.server.xiaozhi.sleepGrace.Milliseconds(),
+		"reason":   reason,
+	}); err != nil {
+		c.server.log.Warn("xiaozhi product sleep request failed", "session_id", c.sessionID, "error", err)
+	}
+
 	timer := time.NewTimer(250 * time.Millisecond)
 	defer timer.Stop()
 	select {

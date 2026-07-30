@@ -105,27 +105,28 @@ type StreamingVoiceProvider interface {
 }
 
 type Config struct {
-	Chat             ChatProvider
-	Voice            VoiceProvider
-	StaticDir        string
-	AccessToken      string
-	EventLogPath     string
-	EventLogLimit    int
-	RecordingDir     string
-	RecordingLimit   int
-	TrimSTTSilence   bool
-	EnableSurprises  bool
-	SpeechCacheDir   string
-	SpeechCacheLimit int
-	EnableXiaozhi    bool
-	XiaozhiDeviceID  string
-	XiaozhiWSURL     string
-	XiaozhiIdleTime  time.Duration
-	XiaozhiFarewell  string
-	XiaozhiVolumeMin int
-	XiaozhiVolumeMax int
-	XiaozhiStreaming bool
-	Logger           *slog.Logger
+	Chat              ChatProvider
+	Voice             VoiceProvider
+	StaticDir         string
+	AccessToken       string
+	EventLogPath      string
+	EventLogLimit     int
+	RecordingDir      string
+	RecordingLimit    int
+	TrimSTTSilence    bool
+	EnableSurprises   bool
+	SpeechCacheDir    string
+	SpeechCacheLimit  int
+	EnableXiaozhi     bool
+	XiaozhiDeviceID   string
+	XiaozhiWSURL      string
+	XiaozhiIdleTime   time.Duration
+	XiaozhiFarewell   string
+	XiaozhiSleepGrace time.Duration
+	XiaozhiVolumeMin  int
+	XiaozhiVolumeMax  int
+	XiaozhiStreaming  bool
+	Logger            *slog.Logger
 }
 
 func New(cfg Config) *Server {
@@ -154,6 +155,10 @@ func New(cfg Config) *Server {
 		}
 	}
 	volumeMin, volumeMax := normalizedVolumeRange(cfg.XiaozhiVolumeMin, cfg.XiaozhiVolumeMax)
+	sleepGrace := cfg.XiaozhiSleepGrace
+	if sleepGrace <= 0 {
+		sleepGrace = 15 * time.Second
+	}
 	s := &Server{
 		mux:         http.NewServeMux(),
 		chat:        cfg.Chat,
@@ -173,6 +178,7 @@ func New(cfg Config) *Server {
 			wsURL:       strings.TrimSpace(cfg.XiaozhiWSURL),
 			idleTimeout: cfg.XiaozhiIdleTime,
 			farewell:    strings.TrimSpace(cfg.XiaozhiFarewell),
+			sleepGrace:  sleepGrace,
 			volumeMin:   volumeMin,
 			volumeMax:   volumeMax,
 			streaming:   cfg.XiaozhiStreaming,

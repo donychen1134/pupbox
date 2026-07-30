@@ -155,6 +155,14 @@ systemctl status pupbox --no-pager
 journalctl -u pupbox -n 100 --no-pager
 ```
 
+产品模式默认在连续 120 秒没有完成新一轮对话后播放告别语，随后向固件发送延迟休眠指令。固件保留 15 秒唤醒词窗口，再进入只能由板载按钮唤醒的深度睡眠。需要调整这段窗口时，在 `/etc/pupbox/pupbox.env` 中设置：
+
+```bash
+PUPBOX_XIAOZHI_SLEEP_GRACE_SECONDS=15
+```
+
+这个值只控制告别语之后的延迟，不改变 `PUPBOX_XIAOZHI_IDLE_SECONDS` 的会话空闲时间。网络断开不会触发深度睡眠，设备会继续自动重连。
+
 ## 验证
 
 先检查 R2S：
@@ -171,5 +179,6 @@ curl -H "Authorization: Bearer $PUPBOX_ACCESS_TOKEN" \
 3. WebSocket 完成 `hello`。
 4. 一轮语音依次出现 STT、reply、TTS first audio 和 turn total timing。
 5. 设备连续播放、没有爆音或断续。
+6. 说“晚安”后先听到告别语，约 15 秒后灯光完全熄灭，按板载 BOOT 键能够重新开机。
 
-真实儿童测试前，至少验证“停”“再见”、危险话题、网络中断重连和 10 分钟空闲恢复。
+真实儿童测试前，至少验证“停”“再见”、危险话题、网络中断重连，以及 2 分钟空闲告别和按键恢复。
