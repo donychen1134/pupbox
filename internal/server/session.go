@@ -52,7 +52,7 @@ func (s *SessionStore) History(id string) []dog.Turn {
 	return append([]dog.Turn(nil), memory.turns...)
 }
 
-func (s *SessionStore) Append(id, user, reply, activityID string) {
+func (s *SessionStore) Append(id, user, reply string, activity *dog.Activity) {
 	if s == nil || !validSessionID.MatchString(id) {
 		return
 	}
@@ -64,10 +64,16 @@ func (s *SessionStore) Append(id, user, reply, activityID string) {
 		s.removeOldestLocked()
 	}
 	memory := s.sessions[id]
+	activityID, activityState := "", ""
+	if activity != nil {
+		activityID = activity.ID
+		activityState = activity.State
+	}
 	memory.turns = append(memory.turns, dog.Turn{
-		User:       truncateText(user, 200),
-		Reply:      truncateText(reply, 200),
-		ActivityID: truncateText(activityID, 40),
+		User:          truncateText(user, 200),
+		Reply:         truncateText(reply, 200),
+		ActivityID:    truncateText(activityID, 40),
+		ActivityState: truncateText(activityState, 40),
 	})
 	if len(memory.turns) > s.maxTurns {
 		memory.turns = append([]dog.Turn(nil), memory.turns[len(memory.turns)-s.maxTurns:]...)

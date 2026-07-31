@@ -3,6 +3,7 @@ package server
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/donychen1134/pupbox/internal/dog"
 )
@@ -15,6 +16,18 @@ func TestContextualInputFlagsRepeatedQuestion(t *testing.T) {
 	input := contextualInput(history, "你干啥呢？")
 	if !strings.Contains(input, "已经问过这句话 2 次") || !strings.Contains(input, "不要重复之前豆豆的回答") {
 		t.Fatalf("repeat guidance missing from input: %q", input)
+	}
+}
+
+func TestSessionStoreKeepsActivityState(t *testing.T) {
+	store := NewSessionStore(2, 4, time.Minute)
+	store.Append("session-1234", "猜动物", "请猜一猜", &dog.Activity{
+		ID:    "animal_guess",
+		State: "animal_guess:3",
+	})
+	history := store.History("session-1234")
+	if len(history) != 1 || history[0].ActivityState != "animal_guess:3" {
+		t.Fatalf("session history = %#v", history)
 	}
 }
 

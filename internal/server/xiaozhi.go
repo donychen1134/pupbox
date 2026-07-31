@@ -392,38 +392,46 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 		firstTokenMS := int64(0)
 		var result streamedReplyResult
 		var deviceCommandErr error
-		if volume, volumeReply, matched := c.resolveVolumeCommand(text); matched {
+		emitSentence := func(sentence string) error {
+			select {
+			case sentences <- sentence:
+				return nil
+			case <-turnCtx.Done():
+				return turnCtx.Err()
+			}
+		}
+		volume, volumeReply, volumeMatched := c.resolveVolumeCommand(text)
+		dialogueText := text
+		if volumeMatched {
 			if volume >= 0 {
 				deviceCommandErr = c.setDeviceVolume(volume)
 			}
+			dialogueText = stripVolumeCommand(text)
+		}
+		if volumeMatched && dialogueText == "" {
 			result = streamedReplyResult{reply: volumeReply, source: "device:volume"}
-			result.err = emitSpeechSentence(volumeReply, func(sentence string) error {
-				select {
-				case sentences <- sentence:
-					return nil
-				case <-turnCtx.Done():
-					return turnCtx.Err()
-				}
-			})
+			result.err = emitSpeechSentence(volumeReply, emitSentence)
 		} else {
+			var volumeSpeechErr error
+			if volumeMatched {
+				volumeSpeechErr = emitSpeechSentence(volumeReply, emitSentence)
+			}
 			result = c.server.streamReply(
 				turnCtx,
-				text,
+				dialogueText,
 				history,
-				func(sentence string) error {
-					select {
-					case sentences <- sentence:
-						return nil
-					case <-turnCtx.Done():
-						return turnCtx.Err()
-					}
-				},
+				emitSentence,
 				func() {
 					if firstTokenMS == 0 {
 						firstTokenMS = elapsedMS(replyStarted)
 					}
 				},
 			)
+			if volumeMatched {
+				result.reply = strings.TrimSpace(volumeReply + result.reply)
+				result.source = "device:volume+" + result.source
+				result.err = errors.Join(volumeSpeechErr, result.err)
+			}
 		}
 		resultCh <- replyResult{
 			streamedReplyResult: result,
@@ -491,7 +499,7 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 		TTSError:   errorString(ttsErr),
 		Timings:    timings,
 	}
-	c.server.sessions.Append(c.sessionID, text, reply, activityID(activity))
+	c.server.sessions.Append(c.sessionID, text, reply, activity)
 	c.server.recordConversation("xiaozhi", response, nil, eventErrors{
 		Chat: errorString(chatErr),
 		TTS:  errorString(ttsErr),

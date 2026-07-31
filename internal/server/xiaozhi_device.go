@@ -16,7 +16,10 @@ const (
 	deviceVolumeStep              = 15
 )
 
-var arabicVolumePattern = regexp.MustCompile(`(?:音量|声音|调到|调成)[^0-9]{0,4}([0-9]{1,3})`)
+var (
+	arabicVolumePattern        = regexp.MustCompile(`(?:音量|声音|调到|调成)[^0-9]{0,4}([0-9]{1,3})`)
+	arabicVolumeRequestPattern = regexp.MustCompile(`(?:把)?(?:音量|声音)?(?:调到|调成)[^0-9]{0,4}[0-9]{1,3}`)
+)
 
 func (c *xiaozhiConnection) requestDeviceStatus() {
 	id := c.nextMCPID()
@@ -126,9 +129,11 @@ func (c *xiaozhiConnection) handleMCPResponse(payload json.RawMessage) {
 }
 
 func (c *xiaozhiConnection) resolveVolumeCommand(text string) (int, string, bool) {
-	command := strings.NewReplacer(" ", "", "，", "", ",", "", "。", "", "？", "", "?", "").Replace(text)
+	command := strings.NewReplacer(" ", "", "，", "", ",", "", "。", "", "？", "", "?", "", "！", "", "!", "").Replace(text)
 	hasSubject := strings.Contains(command, "声音") || strings.Contains(command, "音量") ||
-		strings.Contains(command, "大声") || strings.Contains(command, "小声")
+		strings.Contains(command, "大声") || strings.Contains(command, "小声") ||
+		strings.Contains(command, "大点声") || strings.Contains(command, "小点声") ||
+		strings.Contains(command, "轻点声") || strings.Contains(command, "响点声")
 	standaloneAdjustment := containsExact(command,
 		"大一点", "再大一点", "小一点", "再小一点", "轻一点", "再轻一点", "响一点", "再响一点")
 	if !hasSubject && !standaloneAdjustment {
@@ -143,9 +148,9 @@ func (c *xiaozhiConnection) resolveVolumeCommand(text string) (int, string, bool
 
 	current := c.currentDeviceVolume()
 	switch {
-	case containsAny(command, "太小", "大一点", "大点", "调大", "调高", "高一点", "响一点", "大声一点"):
+	case containsAny(command, "太小", "大一点", "大点", "调大", "调高", "高一点", "响一点", "大声一点", "大点声", "响点声"):
 		return c.clampDeviceVolume(current + deviceVolumeStep), "好呀，豆豆大声一点。", true
-	case containsAny(command, "太大", "小一点", "小点", "调小", "调低", "低一点", "轻一点", "小声一点"):
+	case containsAny(command, "太大", "小一点", "小点", "调小", "调低", "低一点", "轻一点", "小声一点", "小点声", "轻点声"):
 		return c.clampDeviceVolume(current - deviceVolumeStep), "好呀，豆豆小声一点。", true
 	case containsAny(command, "最大", "最响"):
 		return c.server.xiaozhi.volumeMax, "好呀，豆豆把声音调到安全的最大音量啦。", true
@@ -156,6 +161,27 @@ func (c *xiaozhiConnection) resolveVolumeCommand(text string) (int, string, bool
 	default:
 		return -1, "", false
 	}
+}
+
+func stripVolumeCommand(text string) string {
+	cleaned := arabicVolumeRequestPattern.ReplaceAllString(text, "")
+	cleaned = strings.NewReplacer(
+		"请你把声音大一点", "", "请你把声音小一点", "",
+		"请把声音大一点", "", "请把声音小一点", "",
+		"你大点声", "", "你小点声", "", "你轻点声", "", "你响点声", "",
+		"再大声一点", "", "再小声一点", "", "再大一点", "", "再小一点", "",
+		"声音大一点", "", "声音小一点", "", "音量大一点", "", "音量小一点", "",
+		"大声一点", "", "小声一点", "", "大点声", "", "小点声", "",
+		"轻点声", "", "响点声", "", "轻一点", "", "响一点", "",
+		"调大音量", "", "调小音量", "", "调大声音", "", "调小声音", "",
+	).Replace(cleaned)
+	cleaned = strings.Trim(cleaned, " \t\r\n，,。！？!?；;")
+	meaningful := strings.NewReplacer(" ", "", "，", "", ",", "", "。", "", "？", "", "?", "", "！", "", "!", "").Replace(cleaned)
+	meaningful = strings.NewReplacer("豆豆", "", "你", "", "请", "", "帮我", "", "好吗", "", "可以吗", "", "吧", "", "呀", "", "啊", "").Replace(meaningful)
+	if meaningful == "" {
+		return ""
+	}
+	return cleaned
 }
 
 func (c *xiaozhiConnection) currentDeviceVolume() int {

@@ -17,6 +17,9 @@ type Turn struct {
 	User       string `json:"user"`
 	Reply      string `json:"reply"`
 	ActivityID string `json:"activity_id,omitempty"`
+	// ActivityState tracks the pending deterministic game step without asking
+	// later turns to recover it from the spoken reply text.
+	ActivityState string `json:"-"`
 }
 
 func Instructions() string {

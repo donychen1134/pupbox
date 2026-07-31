@@ -413,6 +413,45 @@ func TestAnimalGuessRepeatsClueWhenShortAnswerIsUnclear(t *testing.T) {
 	}
 }
 
+func TestAnimalGuessRepeatsClueForBareAffirmation(t *testing.T) {
+	round := animalGuessRounds[6]
+	history := []Turn{{
+		User:          "猜动物",
+		Reply:         round.prompt,
+		ActivityID:    "animal_guess",
+		ActivityState: "animal_guess:6",
+	}}
+	activity, ok := PlanActivityWithHistory("是", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, round.prompt) {
+		t.Fatalf("bare animal affirmation = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestAnimalGuessUsesExplicitStateWhenReplyTextChanges(t *testing.T) {
+	history := []Turn{{
+		User:          "猜动物",
+		Reply:         "豆豆正在等你猜。",
+		ActivityID:    "animal_guess",
+		ActivityState: "animal_guess:3",
+	}}
+	activity, ok := PlanActivityWithHistory("是小兔子吗", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "这题是小鸭子") {
+		t.Fatalf("explicit animal state = %#v ok=%v", activity, ok)
+	}
+}
+
+func TestGuideConfusionStartsSimpleDemonstration(t *testing.T) {
+	history := []Turn{{
+		User:       "你会玩什么",
+		Reply:      "豆豆会讲故事、猜动物，还会陪你过家家。你想先玩哪个？",
+		ActivityID: "guide",
+	}}
+	activity, ok := PlanActivityWithHistory("不太懂", history)
+	if !ok || activity.ID != "animal_guess" || !strings.Contains(activity.Reply, "豆豆先出一道简单的") || activity.State != "animal_guess:0" {
+		t.Fatalf("guide confusion = %#v ok=%v", activity, ok)
+	}
+}
+
 func TestAnimalGuessAllowsClearTopicSwitch(t *testing.T) {
 	round := animalGuessRounds[0]
 	history := []Turn{{User: "猜动物", Reply: round.prompt, ActivityID: "animal_guess"}}

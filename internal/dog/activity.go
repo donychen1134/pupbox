@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -54,6 +55,7 @@ type Activity struct {
 	Reply    string `json:"reply,omitempty"`
 	Category string `json:"category"`
 	Action   string `json:"action,omitempty"`
+	State    string `json:"-"`
 }
 
 func Activities() []Activity {
@@ -276,6 +278,9 @@ func PlanActivity(text string) (Activity, bool) {
 func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	rawNormalized := normalizeToddlerIntentText(text)
 	normalized := stripDogAddress(rawNormalized)
+	if containsAny(normalized, "不太懂", "不懂怎么玩", "不会玩") && hasRecentActivity(history, "guide") {
+		return fixedActivity("animal_guess", "没关系，豆豆先出一道简单的。"+animalGuessRounds[0].prompt)
+	}
 	if containsAny(normalized, "听不懂", "听不清", "听不见", "没听见", "不清楚", "有点卡", "太卡", "卡住") {
 		return Activity{}, false
 	}
@@ -356,7 +361,7 @@ func continueRecentActivity(text string, history []Turn) (Activity, bool) {
 	case "magic":
 		return continueMagic(text)
 	case "animal_guess":
-		return continueAnimalGuess(text, previous.Reply)
+		return continueAnimalGuess(text, previous)
 	case "counting":
 		return continueCounting(text, previous.Reply)
 	case "color_hunt":
@@ -603,35 +608,52 @@ var animalGuessRounds = []animalGuessRound{
 	{clue: "有翅膀", answer: "小鸟", aliases: []string{"小鸟", "鸟儿", "鸟"}, prompt: "有翅膀，会叽叽喳喳叫。是小鸟，还是小鱼？"},
 }
 
-func continueAnimalGuess(text, previousReply string) (Activity, bool) {
-	for index, round := range animalGuessRounds {
-		if !strings.Contains(previousReply, round.clue) {
-			continue
-		}
-		next := animalGuessRounds[(index+1)%len(animalGuessRounds)]
-		if matchesShortChoice(text, round.aliases...) {
-			return fixedActivity("animal_guess", "猜对啦，就是"+round.answer+"！下一题："+next.prompt)
-		}
-		if utf8.RuneCountInString(text) <= 8 && containsAny(text, "兔", "鸭", "猫", "狗", "大象", "猴", "鱼", "鸟") {
-			return fixedActivity("animal_guess", "差一点，这题是"+round.answer+"。下一题："+next.prompt)
-		}
-		if isUncertainGameAnswer(text) {
-			return fixedActivity("animal_guess", "你可以猜一个。再听一次："+round.prompt)
-		}
+func continueAnimalGuess(text string, previous Turn) (Activity, bool) {
+	index := animalGuessRoundIndex(previous.ActivityState, previous.Reply)
+	if index < 0 {
+		return Activity{}, false
+	}
+	round := animalGuessRounds[index]
+	next := animalGuessRounds[(index+1)%len(animalGuessRounds)]
+	if matchesShortChoice(text, round.aliases...) {
+		return fixedActivity("animal_guess", "猜对啦，就是"+round.answer+"！下一题："+next.prompt)
+	}
+	if utf8.RuneCountInString(text) <= 8 && containsAny(text, "兔", "鸭", "猫", "狗", "大象", "猴", "鱼", "鸟") {
+		return fixedActivity("animal_guess", "差一点，这题是"+round.answer+"。下一题："+next.prompt)
+	}
+	if isUncertainGameAnswer(text) {
+		return fixedActivity("animal_guess", "你可以猜一个。再听一次："+round.prompt)
 	}
 	return Activity{}, false
+}
+
+func animalGuessRoundIndex(state, reply string) int {
+	if strings.HasPrefix(state, "animal_guess:") {
+		index, err := strconv.Atoi(strings.TrimPrefix(state, "animal_guess:"))
+		if err == nil && index >= 0 && index < len(animalGuessRounds) {
+			return index
+		}
+	}
+	// Keep compatibility with sessions created before explicit state existed.
+	for index, round := range animalGuessRounds {
+		if strings.Contains(reply, round.clue) {
+			return index
+		}
+	}
+	return -1
 }
 
 func isUncertainGameAnswer(text string) bool {
 	normalized := stripDogAddress(normalizeToddlerIntentText(text))
 	return LooksLikeToddlerBabble(normalized) ||
-		equalsAny(normalized, "好", "好的", "不知道", "不晓得", "什么", "猜不到", "不会", "叔叔", "数数", "再说一遍", "再讲一遍")
+		equalsAny(normalized, "好", "好的", "是", "是的", "对", "对的", "不知道", "不晓得", "什么", "猜不到", "不会", "叔叔", "数数", "再说一遍", "再讲一遍")
 }
 
 func fixedActivity(id, reply string) (Activity, bool) {
 	for _, activity := range Activities() {
 		if activity.ID == id {
 			activity.Reply = reply
+			setActivityState(&activity)
 			return activity, true
 		}
 	}
@@ -651,6 +673,7 @@ func activityWithHistory(id string, history []Turn) (Activity, bool) {
 		return Activity{}, false
 	}
 	activity.Reply = randomReplyExcluding(id, history, activity.Reply)
+	setActivityState(&activity)
 	return activity, true
 }
 
@@ -815,10 +838,23 @@ func byID(id string) (Activity, bool) {
 	for _, activity := range Activities() {
 		if activity.ID == id {
 			activity.Reply = nextActivityReply(id, activity.Reply)
+			setActivityState(&activity)
 			return activity, true
 		}
 	}
 	return Activity{}, false
+}
+
+func setActivityState(activity *Activity) {
+	if activity == nil || activity.ID != "animal_guess" {
+		return
+	}
+	for index, round := range animalGuessRounds {
+		if strings.Contains(activity.Reply, round.prompt) {
+			activity.State = "animal_guess:" + strconv.Itoa(index)
+			return
+		}
+	}
 }
 
 func nextActivityReply(id, fallback string) string {

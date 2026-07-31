@@ -426,7 +426,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
-	s.sessions.Append(sessionID, text, reply, activityID(activity))
+	s.sessions.Append(sessionID, text, reply, activity)
 	s.recordConversation("chat", response, nil, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -729,7 +729,7 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
-	s.sessions.Append(sessionID, transcript, reply, activityID(activity))
+	s.sessions.Append(sessionID, transcript, reply, activity)
 	s.recordConversation("voice", response, recording, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr), Recording: errorString(recordingErr)})
 	writeJSON(w, http.StatusOK, response)
 }
