@@ -22,6 +22,9 @@ func TestResolveVolumeCommand(t *testing.T) {
 		{name: "capability", text: "你能调整声音大小吗", wantVolume: -1, wantMatch: true},
 		{name: "standalone quieter", text: "轻一点", wantVolume: 35, wantMatch: true},
 		{name: "toddler louder wording", text: "是小兔子吗？你大点声。", wantVolume: 65, wantMatch: true},
+		{name: "short loud volume", text: "大音量。", wantVolume: 65, wantMatch: true},
+		{name: "short quiet volume", text: "小音量。", wantVolume: 35, wantMatch: true},
+		{name: "raise without subject", text: "调高一点。", wantVolume: 65, wantMatch: true},
 		{name: "unrelated size", text: "这个苹果大一点", wantVolume: -1, wantMatch: false},
 	}
 	for _, test := range tests {
@@ -45,6 +48,8 @@ func TestStripVolumeCommandKeepsConversation(t *testing.T) {
 		{text: "是小兔子吗？你大点声。", want: "是小兔子吗"},
 		{text: "豆豆，声音小一点吧。", want: ""},
 		{text: "把音量调到60", want: ""},
+		{text: "大音量。", want: ""},
+		{text: "是小鸭子吗？大音量。", want: "是小鸭子吗"},
 	}
 	for _, test := range tests {
 		if got := stripVolumeCommand(test.text); got != test.want {

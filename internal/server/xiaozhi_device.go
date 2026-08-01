@@ -135,7 +135,8 @@ func (c *xiaozhiConnection) resolveVolumeCommand(text string) (int, string, bool
 		strings.Contains(command, "大点声") || strings.Contains(command, "小点声") ||
 		strings.Contains(command, "轻点声") || strings.Contains(command, "响点声")
 	standaloneAdjustment := containsExact(command,
-		"大一点", "再大一点", "小一点", "再小一点", "轻一点", "再轻一点", "响一点", "再响一点")
+		"大一点", "再大一点", "小一点", "再小一点", "轻一点", "再轻一点", "响一点", "再响一点",
+		"调高一点", "再调高一点", "调低一点", "再调低一点")
 	if !hasSubject && !standaloneAdjustment {
 		return -1, "", false
 	}
@@ -145,19 +146,22 @@ func (c *xiaozhiConnection) resolveVolumeCommand(text string) (int, string, bool
 		volume = c.clampDeviceVolume(volume)
 		return volume, "好呀，豆豆把声音调好啦。", true
 	}
+	if containsAny(command, "能调", "可以调", "调整", "调节", "怎么调") {
+		return -1, "可以呀。你可以说，声音大一点，或者声音小一点。", true
+	}
 
 	current := c.currentDeviceVolume()
 	switch {
-	case containsAny(command, "太小", "大一点", "大点", "调大", "调高", "高一点", "响一点", "大声一点", "大点声", "响点声"):
+	case containsAny(command, "太小", "大一点", "大点", "调大", "调高", "高一点", "响一点", "大声一点", "大点声", "响点声", "大音量", "音量大", "声音大") ||
+		containsExact(command, "大声"):
 		return c.clampDeviceVolume(current + deviceVolumeStep), "好呀，豆豆大声一点。", true
-	case containsAny(command, "太大", "小一点", "小点", "调小", "调低", "低一点", "轻一点", "小声一点", "小点声", "轻点声"):
+	case containsAny(command, "太大", "小一点", "小点", "调小", "调低", "低一点", "轻一点", "小声一点", "小点声", "轻点声", "小音量", "音量小", "声音小") ||
+		containsExact(command, "小声"):
 		return c.clampDeviceVolume(current - deviceVolumeStep), "好呀，豆豆小声一点。", true
 	case containsAny(command, "最大", "最响"):
 		return c.server.xiaozhi.volumeMax, "好呀，豆豆把声音调到安全的最大音量啦。", true
 	case containsAny(command, "最小", "最轻"):
 		return c.server.xiaozhi.volumeMin, "好呀，豆豆小声说话。", true
-	case containsAny(command, "能调", "可以调", "调整", "调节", "怎么调"):
-		return -1, "可以呀。你可以说，声音大一点，或者声音小一点。", true
 	default:
 		return -1, "", false
 	}
@@ -171,6 +175,7 @@ func stripVolumeCommand(text string) string {
 		"你大点声", "", "你小点声", "", "你轻点声", "", "你响点声", "",
 		"再大声一点", "", "再小声一点", "", "再大一点", "", "再小一点", "",
 		"声音大一点", "", "声音小一点", "", "音量大一点", "", "音量小一点", "",
+		"大音量", "", "小音量", "", "音量大", "", "音量小", "", "声音大", "", "声音小", "",
 		"大声一点", "", "小声一点", "", "大点声", "", "小点声", "",
 		"轻点声", "", "响点声", "", "轻一点", "", "响一点", "",
 		"调大音量", "", "调小音量", "", "调大声音", "", "调小声音", "",
