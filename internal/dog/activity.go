@@ -303,9 +303,6 @@ func PlanActivityWithHistory(text string, history []Turn) (Activity, bool) {
 	if activity, ok := continueRecentActivity(rawNormalized, history); ok {
 		return activity, true
 	}
-	if LooksLikeToddlerBabble(normalized) && recentReplyInvitesContext(history) {
-		return Activity{}, false
-	}
 	if activity, ok := PlanActivity(text); ok {
 		if activity.ID == "clap" && hasRecentCountingRejection(history) {
 			return fixedActivity("clap", "汪汪，豆豆记得不数数啦。你想学小猫，还是学小狗叫？")
@@ -796,26 +793,26 @@ func babbleActivities() []Activity {
 			ID:       "clap",
 			Label:    "回应",
 			Prompt:   "豆豆回应",
-			Reply:    "汪汪，豆豆听见啦。你的声音像一辆小火车，呜呜。",
+			Reply:    "汪汪，豆豆听见啦。你可以慢慢说。",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
 			Prompt:   "豆豆回应",
-			Reply:    "嗯，豆豆在这里。窗外的云会不会也在说嗯呢？",
+			Reply:    "豆豆在这里呀，正听着呢。",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "啊呀，豆豆也来一个小声音：啵。",
+			Reply:    "啵，豆豆回你一个小声音。",
 			Category: "chat",
 		},
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "豆豆听见啦。你想学小猫喵，还是小狗汪？",
+			Reply:    "听见啦，豆豆等你下一句话。",
 			Category: "chat",
 		},
 		{
@@ -827,7 +824,7 @@ func babbleActivities() []Activity {
 		{
 			ID:       "clap",
 			Label:    "回应",
-			Reply:    "嘿嘿，这个声音圆滚滚的，像小泡泡飘起来啦。",
+			Reply:    "汪，豆豆的小耳朵在听呢。",
 			Category: "chat",
 		},
 	}

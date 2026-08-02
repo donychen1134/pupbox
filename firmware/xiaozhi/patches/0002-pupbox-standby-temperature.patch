@@ -1,0 +1,84 @@
+diff --git a/main/application.cc b/main/application.cc
+index d3c1d5f..563ad96 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -547,7 +547,15 @@ void Application::InitializeProtocol() {
+             ESP_LOGW(TAG, "Incoming JSON message has no type");
+             return;
+         }
+-        if (strcmp(type->valuestring, "tts") == 0) {
++        if (strcmp(type->valuestring, "pupbox") == 0) {
++            auto action = cJSON_GetObjectItem(root, "action");
++            if (cJSON_IsString(action) && strcmp(action->valuestring, "standby") == 0) {
++                ESP_LOGI(TAG, "Pupbox voice standby requested");
++                StopListening();
++            } else {
++                ESP_LOGW(TAG, "Invalid Pupbox product command");
++            }
++        } else if (strcmp(type->valuestring, "tts") == 0) {
+             auto state = cJSON_GetObjectItem(root, "state");
+             if (!cJSON_IsString(state)) {
+                 return;
+diff --git a/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc b/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc
+index 1252abc..1a0e233 100644
+--- a/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc
++++ b/main/boards/waveshare/esp32-s3-audio-board/esp32-s3-audio_board.cc
+@@ -15,6 +15,9 @@
+ #include "i2c_device.h"
+ #include <driver/i2c_master.h>
+ #include <driver/ledc.h>
++#if CONFIG_PUPBOX_PRODUCT_MODE
++#include <driver/temperature_sensor.h>
++#endif
+ #include <esp_lcd_panel_io.h>
+ #include <esp_lcd_panel_ops.h>
+ #include <esp_lcd_st77916.h>
+@@ -70,6 +73,7 @@ private:
+     EspVideo* camera_;
+ #if CONFIG_PUPBOX_PRODUCT_MODE
+     PowerSaveTimer* power_save_timer_ = nullptr;
++    temperature_sensor_handle_t temperature_sensor_ = nullptr;
+ #if CONFIG_PUPBOX_BATTERY_MONITOR
+     AdcBatteryMonitor* battery_monitor_ = nullptr;
+     esp_timer_handle_t battery_timer_ = nullptr;
+@@ -204,6 +208,22 @@ private:
+-
++
+ #if CONFIG_PUPBOX_PRODUCT_MODE
+     void InitializeProductMode() {
++        temperature_sensor_config_t temperature_config =
++            TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
++        esp_err_t temperature_err =
++            temperature_sensor_install(&temperature_config, &temperature_sensor_);
++        if (temperature_err == ESP_OK) {
++            temperature_err = temperature_sensor_enable(temperature_sensor_);
++        }
++        if (temperature_err != ESP_OK) {
++            ESP_LOGW(TAG, "Chip temperature sensor unavailable: %s",
++                     esp_err_to_name(temperature_err));
++            if (temperature_sensor_ != nullptr) {
++                temperature_sensor_uninstall(temperature_sensor_);
++                temperature_sensor_ = nullptr;
++            }
++        }
++
+ #if CONFIG_PUPBOX_BATTERY_MONITOR
+         battery_monitor_ = new AdcBatteryMonitor(
+             BATTERY_ADC_UNIT,
+@@ -364,6 +384,15 @@ public:
+         return camera_;
+     }
+-
++
++#if CONFIG_PUPBOX_PRODUCT_MODE
++    virtual bool GetTemperature(float& esp32temp) override {
++        if (temperature_sensor_ == nullptr) {
++            return false;
++        }
++        return temperature_sensor_get_celsius(temperature_sensor_, &esp32temp) == ESP_OK;
++    }
++#endif
++
+ #if CONFIG_PUPBOX_BATTERY_MONITOR
+     virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
+         level = battery_monitor_->GetBatteryLevel();

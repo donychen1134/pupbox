@@ -67,7 +67,7 @@ func TestHandleMCPResponseUpdatesDeviceVolume(t *testing.T) {
 		"result": map[string]any{
 			"content": []map[string]string{{
 				"type": "text",
-				"text": `{"audio_speaker":{"volume":42},"battery":{"level":64,"charging":true}}`,
+				"text": `{"audio_speaker":{"volume":42},"battery":{"level":64,"charging":true},"chip":{"temperature":48.5}}`,
 			}},
 		},
 	})
@@ -85,6 +85,9 @@ func TestHandleMCPResponseUpdatesDeviceVolume(t *testing.T) {
 	}
 	if status.Battery != 64 || !status.BatteryKnown || !status.Charging {
 		t.Fatalf("battery snapshot = %+v", status)
+	}
+	if !status.TemperatureKnown || status.ChipTemperatureC != 48.5 {
+		t.Fatalf("temperature snapshot = %+v", status)
 	}
 }
 

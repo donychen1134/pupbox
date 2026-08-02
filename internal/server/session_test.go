@@ -46,3 +46,22 @@ func TestContextualInputKeepsVeryShortSpeechInCurrentScene(t *testing.T) {
 		t.Fatalf("short speech guidance missing from input: %q", input)
 	}
 }
+
+func TestSessionHistoryExpiresOldSceneAndKeepsFourTurns(t *testing.T) {
+	store := NewSessionStore(2, 10, time.Hour)
+	id := "session-1234"
+	turns := []dog.Turn{{User: "旧旅行", Reply: "去山坡", OccurredAt: time.Now().Add(-2 * time.Minute)}}
+	for i := 0; i < 5; i++ {
+		turns = append(turns, dog.Turn{User: "新话题", Reply: "新回答", OccurredAt: time.Now()})
+	}
+	store.sessions[id] = sessionMemory{turns: turns, updatedAt: time.Now()}
+	history := store.History(id)
+	if len(history) != 4 {
+		t.Fatalf("history length = %d, want 4", len(history))
+	}
+	for _, turn := range history {
+		if turn.User == "旧旅行" {
+			t.Fatal("expired scene remained in context")
+		}
+	}
+}

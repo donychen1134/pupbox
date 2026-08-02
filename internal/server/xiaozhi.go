@@ -29,15 +29,16 @@ type xiaozhiVoiceProvider interface {
 }
 
 type xiaozhiConfig struct {
-	enabled     bool
-	deviceID    string
-	wsURL       string
-	idleTimeout time.Duration
-	farewell    string
-	sleepGrace  time.Duration
-	volumeMin   int
-	volumeMax   int
-	streaming   bool
+	enabled       bool
+	deviceID      string
+	wsURL         string
+	activeTimeout time.Duration
+	idleTimeout   time.Duration
+	farewell      string
+	sleepGrace    time.Duration
+	volumeMin     int
+	volumeMax     int
+	streaming     bool
 }
 
 type xiaozhiClientHello struct {
@@ -62,44 +63,48 @@ type xiaozhiDeviceMessage struct {
 }
 
 type xiaozhiConnection struct {
-	server      *Server
-	conn        *websocket.Conn
-	voice       xiaozhiVoiceProvider
-	ctx         context.Context
-	cancel      context.CancelFunc
-	sessionID   string
-	sampleRate  int
-	frameMS     int
-	inputFrame  int
-	inputRate   int
-	audio       chan []byte
-	writeMu     sync.Mutex
-	deviceMu    sync.Mutex
-	turnMu      sync.Mutex
-	activityMu  sync.Mutex
-	mcpID       int64
-	statusMCPID int64
-	volume      int
-	volumeKnown bool
-	turnStarted time.Time
-	lastAudioAt time.Time
-	audioBytes  int64
-	audioFrames int64
-	turnCancel  context.CancelFunc
-	lastActive  time.Time
-	turnActive  bool
-	idleClosing bool
+	server          *Server
+	conn            *websocket.Conn
+	voice           xiaozhiVoiceProvider
+	ctx             context.Context
+	cancel          context.CancelFunc
+	sessionID       string
+	sampleRate      int
+	frameMS         int
+	inputFrame      int
+	inputRate       int
+	audio           chan []byte
+	writeMu         sync.Mutex
+	deviceMu        sync.Mutex
+	turnMu          sync.Mutex
+	activityMu      sync.Mutex
+	mcpID           int64
+	statusMCPID     int64
+	volume          int
+	volumeKnown     bool
+	turnStarted     time.Time
+	lastAudioAt     time.Time
+	audioBytes      int64
+	audioFrames     int64
+	turnCancel      context.CancelFunc
+	lastActive      time.Time
+	turnActive      bool
+	idleClosing     bool
+	standbySent     bool
+	responseRefresh bool
 }
 
 type xiaozhiDeviceStatus struct {
-	Connected    bool   `json:"connected"`
-	ConnectedAt  string `json:"connected_at,omitempty"`
-	LastSeenAt   string `json:"last_seen_at,omitempty"`
-	Volume       int    `json:"volume,omitempty"`
-	VolumeKnown  bool   `json:"volume_known"`
-	Battery      int    `json:"battery,omitempty"`
-	BatteryKnown bool   `json:"battery_known"`
-	Charging     bool   `json:"charging"`
+	Connected        bool    `json:"connected"`
+	ConnectedAt      string  `json:"connected_at,omitempty"`
+	LastSeenAt       string  `json:"last_seen_at,omitempty"`
+	Volume           int     `json:"volume,omitempty"`
+	VolumeKnown      bool    `json:"volume_known"`
+	Battery          int     `json:"battery,omitempty"`
+	BatteryKnown     bool    `json:"battery_known"`
+	Charging         bool    `json:"charging"`
+	ChipTemperatureC float64 `json:"chip_temperature_c,omitempty"`
+	TemperatureKnown bool    `json:"temperature_known"`
 }
 
 var xiaozhiUpgrader = websocket.Upgrader{
@@ -230,6 +235,7 @@ func (c *xiaozhiConnection) run() {
 		return
 	}
 	c.requestDeviceStatus()
+	go c.watchDeviceStatus()
 	c.touchActivity()
 	go c.watchProductIdle()
 	c.server.markXiaozhiConnected()
@@ -257,7 +263,6 @@ func (c *xiaozhiConnection) run() {
 		}
 		switch messageType {
 		case websocket.BinaryMessage:
-			c.touchActivity()
 			c.noteAudio(len(payload))
 			packet := append([]byte(nil), payload...)
 			select {
@@ -276,7 +281,7 @@ func (c *xiaozhiConnection) run() {
 			switch message.Type {
 			case "listen":
 				if message.State == "start" || message.State == "detect" {
-					c.touchActivity()
+					c.resumeFromStandby()
 					c.beginTurn()
 				}
 			case "abort":
@@ -311,15 +316,27 @@ func (s *Server) markXiaozhiDisconnected() {
 	s.xiaozhiMu.Unlock()
 }
 
-func (s *Server) updateXiaozhiDeviceStatus(volume int, volumeKnown bool, battery int, batteryKnown, charging bool) {
+func (s *Server) updateXiaozhiDeviceStatus(volume int, volumeKnown bool, battery int, batteryKnown, charging bool, chipTemperature float64, temperatureKnown bool) {
+	now := time.Now().UTC()
 	s.xiaozhiMu.Lock()
 	s.xiaozhiInfo.Volume = volume
 	s.xiaozhiInfo.VolumeKnown = volumeKnown
 	s.xiaozhiInfo.Battery = battery
 	s.xiaozhiInfo.BatteryKnown = batteryKnown
 	s.xiaozhiInfo.Charging = charging
-	s.xiaozhiInfo.LastSeenAt = time.Now().UTC().Format(time.RFC3339)
+	s.xiaozhiInfo.ChipTemperatureC = chipTemperature
+	s.xiaozhiInfo.TemperatureKnown = temperatureKnown
+	s.xiaozhiInfo.LastSeenAt = now.Format(time.RFC3339)
 	s.xiaozhiMu.Unlock()
+	if s.deviceTelemetry != nil {
+		if err := s.deviceTelemetry.Append(DeviceTelemetrySample{
+			Time: now.Format(time.RFC3339Nano), ChipTemperatureC: chipTemperature,
+			TemperatureKnown: temperatureKnown, Volume: volume, VolumeKnown: volumeKnown,
+			Battery: battery, BatteryKnown: batteryKnown, Charging: charging,
+		}); err != nil {
+			s.log.Warn("failed to append device telemetry", "error", err)
+		}
+	}
 }
 
 func (s *Server) xiaozhiDeviceSnapshot() (xiaozhiDeviceStatus, bool) {
@@ -333,16 +350,6 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 	if text == "" {
 		return nil
 	}
-	c.beginResponse()
-	defer c.endResponse()
-
-	turnCtx, cancel := context.WithCancel(c.ctx)
-	c.setCurrentTurn(cancel)
-	defer func() {
-		cancel()
-		c.clearCurrentTurn()
-	}()
-
 	started, lastAudioAt, audioBytes, audioFrames := c.takeTurnStats()
 	if started.IsZero() {
 		started = time.Now()
@@ -352,6 +359,16 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 		AudioBytes:      audioBytes,
 		AudioDurationMS: audioFrames * int64(c.inputFrame),
 	}
+	contextEligible := !dog.LooksLikeToddlerBabble(text) && !dog.LooksLikeAmbientLongSpeech(text, timings.AudioDurationMS)
+	c.beginResponse(contextEligible)
+	defer c.endResponse()
+
+	turnCtx, cancel := context.WithCancel(c.ctx)
+	c.setCurrentTurn(cancel)
+	defer func() {
+		cancel()
+		c.clearCurrentTurn()
+	}()
 	if !lastAudioAt.IsZero() {
 		timings.STTMS = elapsedMS(lastAudioAt)
 	}
@@ -411,6 +428,10 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 		if volumeMatched && dialogueText == "" {
 			result = streamedReplyResult{reply: volumeReply, source: "device:volume"}
 			result.err = emitSpeechSentence(volumeReply, emitSentence)
+		} else if dog.LooksLikeAmbientLongSpeech(dialogueText, timings.AudioDurationMS) {
+			ambientReply := "豆豆刚才听到好多声音。" + dog.CurrentChildProfile().Name + "可以再说一句短短的话。"
+			result = streamedReplyResult{reply: ambientReply, source: "input:ambient_long"}
+			result.err = emitSpeechSentence(ambientReply, emitSentence)
 		} else {
 			var volumeSpeechErr error
 			if volumeMatched {
@@ -499,7 +520,9 @@ func (c *xiaozhiConnection) handleTranscript(text, emotion string) error {
 		TTSError:   errorString(ttsErr),
 		Timings:    timings,
 	}
-	c.server.sessions.Append(c.sessionID, text, reply, activity)
+	if contextEligible && shouldRememberConversation(source) {
+		c.server.sessions.Append(c.sessionID, text, reply, activity)
+	}
 	c.server.recordConversation("xiaozhi", response, nil, eventErrors{
 		Chat: errorString(chatErr),
 		TTS:  errorString(ttsErr),
@@ -521,29 +544,51 @@ func endingActivity(activity *dog.Activity) bool {
 func (c *xiaozhiConnection) touchActivity() {
 	c.activityMu.Lock()
 	c.lastActive = time.Now()
+	c.standbySent = false
 	c.activityMu.Unlock()
 }
 
-func (c *xiaozhiConnection) beginResponse() {
+func (c *xiaozhiConnection) resumeFromStandby() {
 	c.activityMu.Lock()
-	c.lastActive = time.Now()
+	defer c.activityMu.Unlock()
+	if c.standbySent {
+		c.lastActive = time.Now()
+		c.standbySent = false
+	}
+}
+
+func (c *xiaozhiConnection) beginResponse(refreshActivity bool) {
+	c.activityMu.Lock()
+	c.responseRefresh = refreshActivity
+	if refreshActivity {
+		c.lastActive = time.Now()
+		c.standbySent = false
+	}
 	c.turnActive = true
 	c.activityMu.Unlock()
 }
 
 func (c *xiaozhiConnection) endResponse() {
 	c.activityMu.Lock()
-	c.lastActive = time.Now()
+	if c.responseRefresh {
+		c.lastActive = time.Now()
+	}
+	c.responseRefresh = false
 	c.turnActive = false
 	c.activityMu.Unlock()
 }
 
 func (c *xiaozhiConnection) watchProductIdle() {
-	timeout := c.server.xiaozhi.idleTimeout
-	if timeout <= 0 {
+	activeTimeout := c.server.xiaozhi.activeTimeout
+	idleTimeout := c.server.xiaozhi.idleTimeout
+	if activeTimeout <= 0 && idleTimeout <= 0 {
 		return
 	}
-	interval := min(timeout/4, time.Second)
+	intervalBase := idleTimeout
+	if intervalBase <= 0 || (activeTimeout > 0 && activeTimeout < intervalBase) {
+		intervalBase = activeTimeout
+	}
+	interval := min(intervalBase/4, time.Second)
 	if interval < 10*time.Millisecond {
 		interval = 10 * time.Millisecond
 	}
@@ -555,12 +600,35 @@ func (c *xiaozhiConnection) watchProductIdle() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			if !c.claimIdleClose(timeout) {
-				continue
+			if idleTimeout > 0 && c.claimIdleClose(idleTimeout) {
+				c.sayFarewellAndClose()
+				return
 			}
-			c.sayFarewellAndClose()
-			return
+			if activeTimeout > 0 && c.claimVoiceStandby(activeTimeout) {
+				c.sendVoiceStandby()
+			}
 		}
+	}
+}
+
+func (c *xiaozhiConnection) claimVoiceStandby(timeout time.Duration) bool {
+	c.activityMu.Lock()
+	defer c.activityMu.Unlock()
+	if c.standbySent || c.idleClosing || c.turnActive || c.lastActive.IsZero() || time.Since(c.lastActive) < timeout {
+		return false
+	}
+	c.standbySent = true
+	return true
+}
+
+func (c *xiaozhiConnection) sendVoiceStandby() {
+	c.server.log.Info("xiaozhi entering voice standby", "session_id", c.sessionID)
+	if err := c.writeJSON(map[string]any{
+		"type":   "pupbox",
+		"action": "standby",
+		"reason": "active conversation timeout",
+	}); err != nil {
+		c.server.log.Warn("xiaozhi voice standby request failed", "session_id", c.sessionID, "error", err)
 	}
 }
 

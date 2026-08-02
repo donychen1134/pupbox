@@ -29,6 +29,19 @@ func (c *xiaozhiConnection) requestDeviceStatus() {
 	_ = c.writeMCPRequest(id, "self.get_device_status", map[string]any{})
 }
 
+func (c *xiaozhiConnection) watchDeviceStatus() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.requestDeviceStatus()
+		}
+	}
+}
+
 func (c *xiaozhiConnection) setDeviceVolume(volume int) error {
 	volume = c.clampDeviceVolume(volume)
 	id := c.nextMCPID()
@@ -98,6 +111,9 @@ func (c *xiaozhiConnection) handleMCPResponse(payload json.RawMessage) {
 				Level    int  `json:"level"`
 				Charging bool `json:"charging"`
 			} `json:"battery"`
+			Chip *struct {
+				Temperature float64 `json:"temperature"`
+			} `json:"chip"`
 		}
 		if content.Type != "text" || json.Unmarshal([]byte(content.Text), &status) != nil {
 			continue
@@ -120,7 +136,12 @@ func (c *xiaozhiConnection) handleMCPResponse(payload json.RawMessage) {
 			battery = min(100, max(0, status.Battery.Level))
 			charging = status.Battery.Charging
 		}
-		c.server.updateXiaozhiDeviceStatus(volume, volumeKnown, battery, batteryKnown, charging)
+		chipTemperature := 0.0
+		temperatureKnown := status.Chip != nil
+		if temperatureKnown {
+			chipTemperature = status.Chip.Temperature
+		}
+		c.server.updateXiaozhiDeviceStatus(volume, volumeKnown, battery, batteryKnown, charging, chipTemperature, temperatureKnown)
 		if volumeKnown && rawVolume != volume {
 			_ = c.setDeviceVolume(rawVolume)
 		}

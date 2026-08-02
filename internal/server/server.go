@@ -26,31 +26,32 @@ import (
 )
 
 type Server struct {
-	mux         *http.ServeMux
-	chat        ChatProvider
-	voice       VoiceProvider
-	useChat     bool
-	useVoice    bool
-	useSurprise bool
-	staticDir   string
-	accessToken string
-	events      *EventStore
-	recordings  *RecordingStore
-	trimSTT     bool
-	sessions    *SessionStore
-	xiaozhi     xiaozhiConfig
-	xiaozhiMu   sync.RWMutex
-	xiaozhiInfo xiaozhiDeviceStatus
-	speechMu    sync.Mutex
-	speechCache map[string]cachedSpeech
-	speechDisk  *SpeechDiskCache
-	speechCalls map[string]*speechCall
-	warmRunning atomic.Bool
-	warmTotal   atomic.Int64
-	warmDone    atomic.Int64
-	warmErrors  atomic.Int64
-	traceSeq    atomic.Uint64
-	log         *slog.Logger
+	mux             *http.ServeMux
+	chat            ChatProvider
+	voice           VoiceProvider
+	useChat         bool
+	useVoice        bool
+	useSurprise     bool
+	staticDir       string
+	accessToken     string
+	events          *EventStore
+	recordings      *RecordingStore
+	deviceTelemetry *DeviceTelemetryStore
+	trimSTT         bool
+	sessions        *SessionStore
+	xiaozhi         xiaozhiConfig
+	xiaozhiMu       sync.RWMutex
+	xiaozhiInfo     xiaozhiDeviceStatus
+	speechMu        sync.Mutex
+	speechCache     map[string]cachedSpeech
+	speechDisk      *SpeechDiskCache
+	speechCalls     map[string]*speechCall
+	warmRunning     atomic.Bool
+	warmTotal       atomic.Int64
+	warmDone        atomic.Int64
+	warmErrors      atomic.Int64
+	traceSeq        atomic.Uint64
+	log             *slog.Logger
 }
 
 type cachedSpeech struct {
@@ -113,6 +114,8 @@ type Config struct {
 	EventLogLimit     int
 	RecordingDir      string
 	RecordingLimit    int
+	DeviceLogPath     string
+	DeviceLogLimit    int
 	TrimSTTSilence    bool
 	EnableSurprises   bool
 	SpeechCacheDir    string
@@ -120,6 +123,7 @@ type Config struct {
 	EnableXiaozhi     bool
 	XiaozhiDeviceID   string
 	XiaozhiWSURL      string
+	XiaozhiActiveTime time.Duration
 	XiaozhiIdleTime   time.Duration
 	XiaozhiFarewell   string
 	XiaozhiSleepGrace time.Duration
@@ -148,6 +152,12 @@ func New(cfg Config) *Server {
 			logger.Warn("event log is not ready", "error", err)
 		}
 	}
+	deviceTelemetry := NewDeviceTelemetryStore(cfg.DeviceLogPath, cfg.DeviceLogLimit)
+	if deviceTelemetry != nil {
+		if err := deviceTelemetry.Ensure(); err != nil {
+			logger.Warn("device telemetry log is not ready", "error", err)
+		}
+	}
 	speechDisk := NewSpeechDiskCache(cfg.SpeechCacheDir, cfg.SpeechCacheLimit)
 	if speechDisk != nil {
 		if err := speechDisk.Ensure(); err != nil {
@@ -160,28 +170,30 @@ func New(cfg Config) *Server {
 		sleepGrace = 15 * time.Second
 	}
 	s := &Server{
-		mux:         http.NewServeMux(),
-		chat:        cfg.Chat,
-		voice:       voice,
-		useChat:     chatEnabled(cfg.Chat, forceMock),
-		useVoice:    voice != nil && voice.Available() && !forceMock,
-		useSurprise: cfg.EnableSurprises,
-		staticDir:   cfg.StaticDir,
-		accessToken: strings.TrimSpace(cfg.AccessToken),
-		events:      events,
-		recordings:  NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
-		trimSTT:     cfg.TrimSTTSilence,
-		sessions:    NewSessionStore(128, 10, 30*time.Minute),
+		mux:             http.NewServeMux(),
+		chat:            cfg.Chat,
+		voice:           voice,
+		useChat:         chatEnabled(cfg.Chat, forceMock),
+		useVoice:        voice != nil && voice.Available() && !forceMock,
+		useSurprise:     cfg.EnableSurprises,
+		staticDir:       cfg.StaticDir,
+		accessToken:     strings.TrimSpace(cfg.AccessToken),
+		events:          events,
+		recordings:      NewRecordingStore(cfg.RecordingDir, cfg.RecordingLimit),
+		deviceTelemetry: deviceTelemetry,
+		trimSTT:         cfg.TrimSTTSilence,
+		sessions:        NewSessionStore(128, 10, 30*time.Minute),
 		xiaozhi: xiaozhiConfig{
-			enabled:     cfg.EnableXiaozhi,
-			deviceID:    normalizeDeviceID(cfg.XiaozhiDeviceID),
-			wsURL:       strings.TrimSpace(cfg.XiaozhiWSURL),
-			idleTimeout: cfg.XiaozhiIdleTime,
-			farewell:    strings.TrimSpace(cfg.XiaozhiFarewell),
-			sleepGrace:  sleepGrace,
-			volumeMin:   volumeMin,
-			volumeMax:   volumeMax,
-			streaming:   cfg.XiaozhiStreaming,
+			enabled:       cfg.EnableXiaozhi,
+			deviceID:      normalizeDeviceID(cfg.XiaozhiDeviceID),
+			wsURL:         strings.TrimSpace(cfg.XiaozhiWSURL),
+			activeTimeout: cfg.XiaozhiActiveTime,
+			idleTimeout:   cfg.XiaozhiIdleTime,
+			farewell:      strings.TrimSpace(cfg.XiaozhiFarewell),
+			sleepGrace:    sleepGrace,
+			volumeMin:     volumeMin,
+			volumeMax:     volumeMax,
+			streaming:     cfg.XiaozhiStreaming,
 		},
 		speechCache: make(map[string]cachedSpeech),
 		speechDisk:  speechDisk,
@@ -209,6 +221,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.requireAccess(s.handleHealth))
 	s.mux.HandleFunc("GET /api/activities", s.requireAccess(s.handleActivities))
 	s.mux.HandleFunc("GET /api/events", s.requireAccess(s.handleEvents))
+	s.mux.HandleFunc("GET /api/device-telemetry", s.requireAccess(s.handleDeviceTelemetry))
 	s.mux.HandleFunc("POST /api/event-feedback", s.requireAccess(s.handleEventFeedback))
 	s.mux.HandleFunc("GET /api/recordings/", s.requireAccess(s.handleRecording))
 	s.mux.HandleFunc("POST /api/chat", s.requireAccess(s.handleChat))
@@ -223,6 +236,21 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET /xiaozhi/v1/", s.handleXiaozhiWebSocket)
 	}
 	s.mux.HandleFunc("/", s.handleStatic)
+}
+
+func (s *Server) handleDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
+	if s.deviceTelemetry == nil {
+		writeJSON(w, http.StatusOK, deviceTelemetryResponse{Samples: []DeviceTelemetrySample{}})
+		return
+	}
+	limit := parseEventLimit(r.URL.Query().Get("limit"))
+	samples, err := s.deviceTelemetry.Recent(limit)
+	if err != nil {
+		s.log.Warn("failed to read device telemetry", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to read device telemetry")
+		return
+	}
+	writeJSON(w, http.StatusOK, deviceTelemetryResponse{Samples: samples, Summary: summarizeDeviceTelemetry(samples)})
 }
 
 func (s *Server) requireAccess(next http.HandlerFunc) http.HandlerFunc {
@@ -293,6 +321,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tts_streaming":          s.streamingVoiceAvailable(),
 		"xiaozhi_enabled":        s.xiaozhi.enabled,
 		"xiaozhi_ready":          s.xiaozhiReady(),
+		"xiaozhi_active_seconds": int64(s.xiaozhi.activeTimeout / time.Second),
 		"xiaozhi_idle_seconds":   int64(s.xiaozhi.idleTimeout / time.Second),
 		"xiaozhi_volume_min":     s.xiaozhi.volumeMin,
 		"xiaozhi_volume_max":     s.xiaozhi.volumeMax,
@@ -426,7 +455,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
-	s.sessions.Append(sessionID, text, reply, activity)
+	if shouldRememberConversation(source) {
+		s.sessions.Append(sessionID, text, reply, activity)
+	}
 	s.recordConversation("chat", response, nil, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -729,7 +760,9 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		TTSError:    errorString(ttsErr),
 		Timings:     timings,
 	}
-	s.sessions.Append(sessionID, transcript, reply, activity)
+	if shouldRememberConversation(source) {
+		s.sessions.Append(sessionID, transcript, reply, activity)
+	}
 	s.recordConversation("voice", response, recording, eventErrors{Chat: errorString(aiErr), TTS: errorString(ttsErr), Recording: errorString(recordingErr)})
 	writeJSON(w, http.StatusOK, response)
 }
@@ -862,6 +895,9 @@ func (s *Server) reply(ctx context.Context, text string, history []dog.Turn) (st
 				activity.Reply = dog.SpeechOnlyReply(activity.Reply)
 				return activity.Reply, safety, &activity, "activity:" + activity.ID, nil
 			}
+			if route.Kind == "uncertain" {
+				return dog.SpeechOnlyReply(dog.ClampReply(route.Reply, 40)), safety, nil, "input:uncertain", nil
+			}
 			return dog.SpeechOnlyReply(dog.ClampReply(route.Reply, 90)), safety, nil, s.chat.Name(), nil
 		}
 		reply, err := s.chat.CreateResponse(ctx, dog.Instructions(), contextualInput(history, text))
@@ -880,6 +916,14 @@ func (s *Server) deterministicReply(text string, history []dog.Turn) (string, do
 	if safety.Triggered {
 		return safety.Reply, safety, nil, "safety", true
 	}
+	if dog.NeedsVisualGrounding(text) {
+		return dog.VisualGroundingReply(), safety, nil, "grounding:audio_only", true
+	}
+	if dog.LooksLikeToddlerBabble(text) {
+		activity, _ := dog.PlanActivity(text)
+		activity.Reply = dog.SpeechOnlyReply(activity.Reply)
+		return activity.Reply, safety, &activity, "input:babble", true
+	}
 	if reply, ok := dog.ClarificationReply(text, history); ok {
 		return dog.SpeechOnlyReply(reply), safety, nil, "context:clarification", true
 	}
@@ -895,6 +939,10 @@ func (s *Server) deterministicReply(text string, history []dog.Turn) (string, do
 		}
 	}
 	return "", safety, nil, "", false
+}
+
+func shouldRememberConversation(source string) bool {
+	return !strings.HasPrefix(source, "input:")
 }
 
 func activityID(activity *dog.Activity) string {

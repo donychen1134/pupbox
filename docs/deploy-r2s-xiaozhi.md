@@ -33,7 +33,7 @@ install -m 0755 deploy/openwrt/pupbox.init /etc/init.d/pupbox
 install -m 0600 deploy/openwrt/pupbox.env.example /etc/pupbox.env
 ```
 
-编辑 `/etc/pupbox.env`，填写设备 MAC、R2S LAN 地址、`CHAT_ARCHIVE_QWEN_API_KEY` 和随机生成的 `PUPBOX_ACCESS_TOKEN`，然后启动：
+编辑 `/etc/pupbox.env`，填写设备 MAC、R2S LAN 地址、`CHAT_ARCHIVE_QWEN_API_KEY`、随机生成的 `PUPBOX_ACCESS_TOKEN`，以及只保存在 R2S 上的儿童资料变量 `PUPBOX_CHILD_NAME`、`PUPBOX_CHILD_ALIASES`、`PUPBOX_CHILD_BIRTHDAY`、`PUPBOX_CHILD_KINDERGARTEN_START`，然后启动：
 
 旧版 OpenWrt 没有可用 IPv6 默认路由时，建议设置 `PUPBOX_DASHSCOPE_FORCE_IPV4=true`，让 DashScope 的 HTTP 和 WebSocket 都明确走 IPv4；该选项只影响 Pupbox 进程，不修改系统网络。
 
@@ -56,8 +56,14 @@ logread -e pupbox
 3. 启用 `CONFIG_FORCE_DEFAULT_OTA_URL=y`，避免配网 NVS 里的旧服务地址覆盖自建地址。
 4. 启用产品模式的安全音量、空闲休眠和按键恢复。
 5. 使用 MultiNet7 在板端识别“豆豆你好”和“小狗豆豆”。
+6. 接受后端的语音待机指令，并通过 MCP 上报 ESP32-S3 芯片温度。
 
-仓库中的 `firmware/xiaozhi/patches/0001-pupbox-product-mode.patch` 保存上游源码改动，`firmware/xiaozhi/config.pupbox.example.json` 保存不含真实地址和密钥的板型模板。将模板复制到小智板型目录、改成 R2S 的固定 LAN 地址后再构建。
+仓库中的补丁需要按文件名顺序应用：`0001-pupbox-product-mode.patch` 保存基础产品模式，`0002-pupbox-standby-temperature.patch` 增加语音待机和芯片温度采集。`firmware/xiaozhi/config.pupbox.example.json` 保存不含真实地址和密钥的板型模板。将模板复制到小智板型目录、改成 R2S 的固定 LAN 地址后再构建。
+
+```bash
+git apply /path/to/pupbox/firmware/xiaozhi/patches/0001-pupbox-product-mode.patch
+git apply /path/to/pupbox/firmware/xiaozhi/patches/0002-pupbox-standby-temperature.patch
+```
 
 示例板型配置：
 
@@ -155,13 +161,29 @@ systemctl status pupbox --no-pager
 journalctl -u pupbox -n 100 --no-pager
 ```
 
-产品模式默认在连续 120 秒没有完成新一轮对话后播放告别语，随后向固件发送延迟休眠指令。固件保留 15 秒唤醒词窗口，再进入只能由板载按钮唤醒的深度睡眠。需要调整这段窗口时，在 `/etc/pupbox/pupbox.env` 中设置：
+产品模式分为两段：连续 30 秒没有有效儿童表达时回到唤醒词待机，但保持网络连接；连续 120 秒仍无有效互动时播放告别语，随后发送延迟休眠指令。环境音频包、幼儿无意义音节和疑似成人长语音不会刷新活跃时间。可分别调整：
+
+```bash
+PUPBOX_XIAOZHI_ACTIVE_SECONDS=30
+PUPBOX_XIAOZHI_IDLE_SECONDS=120
+```
+
+固件在告别后保留 15 秒唤醒词窗口，再进入只能由产品按钮唤醒的深度睡眠。需要调整这段窗口时，在 `/etc/pupbox/pupbox.env` 中设置：
 
 ```bash
 PUPBOX_XIAOZHI_SLEEP_GRACE_SECONDS=15
 ```
 
 这个值只控制告别语之后的延迟，不改变 `PUPBOX_XIAOZHI_IDLE_SECONDS` 的会话空闲时间。网络断开不会触发深度睡眠，设备会继续自动重连。
+
+定制固件还通过 `self.get_device_status` 返回 ESP32-S3 芯片内部温度。服务端每 30 秒采样，默认保存到：
+
+```bash
+PUPBOX_DEVICE_LOG_PATH=/var/lib/pupbox/device-telemetry.jsonl
+PUPBOX_DEVICE_LOG_LIMIT=2880
+```
+
+家长诊断页显示当前、近期最低和最高芯片温度。该值不能代表盒内电池温度；装入毛绒外壳后的首轮测试仍需使用绝缘固定的外部接触探头测量电池表面和盒内温度，并且不要在毛绒内部无人看管充电。
 
 ## 验证
 
@@ -180,5 +202,7 @@ curl -H "Authorization: Bearer $PUPBOX_ACCESS_TOKEN" \
 4. 一轮语音依次出现 STT、reply、TTS first audio 和 turn total timing。
 5. 设备连续播放、没有爆音或断续。
 6. 说“晚安”后先听到告别语，约 15 秒后灯光完全熄灭，按板载 BOOT 键能够重新开机。
+7. 完成一轮对话后等待 30 秒，确认设备回到弱呼吸灯和唤醒词待机；再次说“豆豆你好”应恢复对话。
+8. 打开家长诊断页，等待至少 60 秒，确认设备温度出现两个以上样本并持续更新。
 
 真实儿童测试前，至少验证“停”“再见”、危险话题、网络中断重连，以及 2 分钟空闲告别和按键恢复。

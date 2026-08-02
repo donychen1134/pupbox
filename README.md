@@ -436,12 +436,30 @@ Qwen output into sentence-sized TTS requests. Set
 `PUPBOX_XIAOZHI_STREAMING=false` to retain the previous full-response behavior
 during rollback or A/B diagnosis.
 
+Conversation memory contains at most four meaningful turns and expires after 90
+seconds. Toddler babble and uncertain ASR fragments receive a short response but
+are not saved into scene context. Keep the private child profile in the server's
+environment using `PUPBOX_CHILD_NAME`, `PUPBOX_CHILD_ALIASES`,
+`PUPBOX_CHILD_BIRTHDAY`, and `PUPBOX_CHILD_KINDERGARTEN_START`. The birthday is
+used to calculate the current age at runtime. Never commit a child's real profile
+to the public repository.
+
+Product mode returns to wake-word standby after 30 seconds without a meaningful
+turn and keeps the existing 120-second farewell/deep-sleep boundary. Configure
+these independently with `PUPBOX_XIAOZHI_ACTIVE_SECONDS` and
+`PUPBOX_XIAOZHI_IDLE_SECONDS`.
+
+The customized firmware reports the ESP32-S3 internal chip temperature through
+MCP. The server samples it every 30 seconds, keeps JSONL telemetry at
+`PUPBOX_DEVICE_LOG_PATH`, and shows the current and recent range on the parent
+diagnostics page. This is not a battery or enclosure temperature measurement.
+
 ## Parent Validation Checklist
 
 Use `http://127.0.0.1:8791/` for diagnostics and `http://127.0.0.1:8791/toy.html` for child-facing validation.
 
 1. Confirm the diagnostics page shows the expected provider, voice, and speed, and the child page says `在线`.
-2. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should acknowledge immediately with a local melody and still respond with a simple activity.
+2. Press and hold, say `嗯嗯` or another unclear toddler-like sound, then release. The dog should acknowledge it briefly without starting a game or changing the previous topic.
 3. Tap quickly without speaking. The page should reject the short recording without sending it to STT.
 4. Say `豆豆讲故事` several times. Stories should be selected randomly without repeating within the current session and remain short enough to finish before the child loses attention.
 5. Say `和豆豆猜动物`, answer the clue, and check that 豆豆 judges the answer before asking the next question.

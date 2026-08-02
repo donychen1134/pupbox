@@ -14,6 +14,11 @@ import (
 
 const sessionHeader = "X-Pupbox-Session-ID"
 
+const (
+	contextTurnLimit = 4
+	contextSceneTTL  = 90 * time.Second
+)
+
 var validSessionID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,80}$`)
 
 type sessionMemory struct {
@@ -49,7 +54,21 @@ func (s *SessionStore) History(id string) []dog.Turn {
 	if !ok {
 		return nil
 	}
-	return append([]dog.Turn(nil), memory.turns...)
+	turns := memory.turns
+	cutoff := time.Now().Add(-contextSceneTTL)
+	first := len(turns)
+	for first > 0 {
+		turn := turns[first-1]
+		if !turn.OccurredAt.IsZero() && turn.OccurredAt.Before(cutoff) {
+			break
+		}
+		first--
+	}
+	turns = turns[first:]
+	if len(turns) > contextTurnLimit {
+		turns = turns[len(turns)-contextTurnLimit:]
+	}
+	return append([]dog.Turn(nil), turns...)
 }
 
 func (s *SessionStore) Append(id, user, reply string, activity *dog.Activity) {
@@ -74,6 +93,7 @@ func (s *SessionStore) Append(id, user, reply string, activity *dog.Activity) {
 		Reply:         truncateText(reply, 200),
 		ActivityID:    truncateText(activityID, 40),
 		ActivityState: truncateText(activityState, 40),
+		OccurredAt:    now,
 	})
 	if len(memory.turns) > s.maxTurns {
 		memory.turns = append([]dog.Turn(nil), memory.turns[len(memory.turns)-s.maxTurns:]...)
@@ -116,7 +136,7 @@ func contextualInput(history []dog.Turn, current string) string {
 		return current
 	}
 	var builder strings.Builder
-	builder.WriteString("下面是豆豆和小朋友最近的对话。请理解上下文，只回答小朋友现在说的话，不要复述对话记录。如果上一轮豆豆问了问题，请先判断小朋友现在是否在回答它。\n")
+	builder.WriteString("下面只包含豆豆和小主人最近仍有效的对话。只回答小主人现在说的话，不要复述记录。当前输入出现新的具体事物或想法时，立刻结束旧场景；不能因为上一轮在玩游戏就强行延续。\n")
 	for _, turn := range history {
 		if turn.ActivityID != "" {
 			fmt.Fprintf(&builder, "小朋友：%s\n豆豆（正在进行%s活动）：%s\n", turn.User, turn.ActivityID, turn.Reply)

@@ -11,6 +11,7 @@ const state = {
   activities: [],
   events: [],
   eventSummary: null,
+  deviceSummary: null,
   accessToken: "",
   recordingStartedAt: 0,
   recordingTimer: null,
@@ -34,6 +35,7 @@ const els = {
   refreshEventsButton: document.querySelector("#refreshEventsButton"),
   eventList: document.querySelector("#eventList"),
   diagnosticSummary: document.querySelector("#diagnosticSummary"),
+  deviceSummary: document.querySelector("#deviceSummary"),
   recordingMeter: document.querySelector("#recordingMeter"),
   recordingLevel: document.querySelector("#recordingLevel"),
   recordingTime: document.querySelector("#recordingTime"),
@@ -48,6 +50,8 @@ async function init() {
   await loadHealth();
   await loadActivities();
   await loadEvents();
+  await loadDeviceTelemetry();
+  window.setInterval(() => loadDeviceTelemetry().catch(() => {}), 30000);
 }
 
 function bindEvents() {
@@ -74,7 +78,32 @@ function bindEvents() {
 
   els.refreshEventsButton.addEventListener("click", () => {
     loadEvents().catch(showError);
+    loadDeviceTelemetry().catch(showError);
   });
+}
+
+async function loadDeviceTelemetry() {
+  try {
+    const payload = await fetchJSON("/api/device-telemetry?limit=120");
+    state.deviceSummary = payload.summary || null;
+  } catch {
+    state.deviceSummary = null;
+  }
+  renderDeviceSummary();
+}
+
+function renderDeviceSummary() {
+  els.deviceSummary.replaceChildren();
+  const summary = state.deviceSummary;
+  if (!summary?.temperature_count) {
+    els.deviceSummary.append(summaryMetric("芯片温度", "暂无数据", "固件连接后每 30 秒采样"));
+    return;
+  }
+  els.deviceSummary.append(
+    summaryMetric("当前", `${Number(summary.current_c).toFixed(1)}°C`, "ESP32 芯片内部"),
+    summaryMetric("最近最低", `${Number(summary.minimum_c).toFixed(1)}°C`, `${summary.temperature_count} 个样本`),
+    summaryMetric("最近最高", `${Number(summary.maximum_c).toFixed(1)}°C`, "不代表电池温度"),
+  );
 }
 
 async function loadActivities() {

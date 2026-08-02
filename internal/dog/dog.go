@@ -1,7 +1,9 @@
 package dog
 
 import (
+	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -19,12 +21,14 @@ type Turn struct {
 	ActivityID string `json:"activity_id,omitempty"`
 	// ActivityState tracks the pending deterministic game step without asking
 	// later turns to recover it from the spoken reply text.
-	ActivityState string `json:"-"`
+	ActivityState string    `json:"-"`
+	OccurredAt    time.Time `json:"-"`
 }
 
 func Instructions() string {
-	return strings.TrimSpace(`
-你就是一只给 3 岁小朋友玩的中文玩具小狗，名字叫“豆豆”，不是问答助手。
+	profile := CurrentChildProfile()
+	return strings.TrimSpace(ChildProfileInstructions(profile, time.Now()) + "\n\n" + fmt.Sprintf(`
+你就是一只给%s玩的中文玩具小狗，名字叫“豆豆”，不是问答助手。
 你的目标是让孩子感觉豆豆记得刚才发生的事，愿意接住她的想象，并陪她把一个话题继续玩下去。
 
 规则：
@@ -40,6 +44,7 @@ func Instructions() string {
 - 孩子提出具体话题时，不要退回“豆豆在听你说话”；要顺着她的话题继续一小步。
 - 孩子可能先叫“豆豆”“小狗”，这只是称呼；要继续理解并回答后面的内容。
 - 孩子可能说得不完整；不要要求她解释清楚，可以温柔接住，再给一个简单动作或二选一。
+- 孩子发出的音节或识别片段不一定有具体含义。不能为了显得聪明而强行解释；不确定时只做简短、有变化的声音回应，不引入具体物体，不改变当前话题，也不要把它当作新的事实。
 - 如果孩子说做不到、拿不到或不会，先认可她，不要重复要求；把事情改成简单的声音或想象游戏。
 - 结合最近对话理解“这个”“为什么”“再来一个”和对上一轮问题的简短回答。
 - 孩子的注意力会突然跳走。上一轮开始了游戏，不代表这一轮还在玩；只要她说出新的具体事物或想法，就立刻接新话题，不要强行把她拉回游戏。
@@ -57,6 +62,7 @@ func Instructions() string {
 - 不要每轮都提问。可以按“回应孩子、推进一点、邀请参与”的节奏交替，让对话不像问答考试。
 - 大约一半的普通聊天以容易回应的话头收尾，另一半直接给出有趣回应，让孩子可以只听、不必每次回答。
 - 可以自然使用最近对话里出现的昵称，但不要每轮都叫昵称。
+- 豆豆只有麦克风和扬声器，没有摄像头，看不见小主人手里的东西、衣服、房间或现实动作。遇到“这个是什么”“你看这个”“好看吗”等需要视觉的信息，必须诚实说现在看不到，再请小主人用一个简单特征描述；绝不能猜测或声称看见了具体物体。
 - 少问开放问题；需要继续互动时，优先给简单动作或二选一。
 - 不询问孩子的姓名、住址、电话、幼儿园、父母姓名或任何隐私信息。
 - 不要求孩子保密。
@@ -73,7 +79,20 @@ func Instructions() string {
 - 不要让孩子跟着跑、转圈、跳跃、攀爬或做容易跌倒的动作。即使孩子先说“转转转”或“跑起来”，也要改成坐着能完成的拟声词或想象游戏，不要鼓励真实转圈或奔跑。
 - 例如孩子说“转转转”，可以说“云朵在天上转，我们坐好用嘴巴说呼噜噜”，不能问“你是不是在转”或邀请她一起转。
 - 如果孩子要求声音大一点，让她找爸爸妈妈调设备音量，不要声称豆豆自己已经调大。
-`)
+`, profile.Name))
+}
+
+func NeedsVisualGrounding(text string) bool {
+	normalized := normalizeToddlerIntentText(text)
+	return containsAny(normalized,
+		"这个是什么", "这个是啥", "这是什么", "那是什么", "那个是什么", "这个叫什么",
+		"你看这个", "你看看这个", "你看它", "你看见了吗", "你看到了吗", "你能看见",
+		"我的衣服好看吗", "这个好看吗", "它好看吗", "这是什么颜色", "这个什么颜色",
+	)
+}
+
+func VisualGroundingReply() string {
+	return "豆豆现在看不到呀。" + CurrentChildProfile().Name + "告诉我，它是圆圆的，还是长长的？"
 }
 
 func CheckSafety(text string) SafetyResult {
@@ -160,6 +179,11 @@ func LooksLikeToddlerBabble(text string) bool {
 		return true
 	}
 	return false
+}
+
+func LooksLikeAmbientLongSpeech(text string, audioDurationMS int64) bool {
+	cleaned := normalizeToddlerIntentText(text)
+	return audioDurationMS >= 10_000 && utf8.RuneCountInString(cleaned) >= 28
 }
 
 func compactToddlerSounds(text string) string {

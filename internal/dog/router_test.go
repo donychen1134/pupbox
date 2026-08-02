@@ -17,6 +17,7 @@ func TestParseSemanticRoute(t *testing.T) {
 		{name: "activity", raw: `{"kind":"activity","activity_id":"animal_guess","reply":""}`, wantKind: "activity", wantID: "animal_guess"},
 		{name: "qwen activity kind", raw: `{"kind":"animal_guess","activity_id":"animal_guess","reply":""}`, wantKind: "activity", wantID: "animal_guess"},
 		{name: "chat fence", raw: "```json\n{\"kind\":\"chat\",\"activity_id\":\"\",\"reply\":\"云朵像软软的棉花糖。\"}\n```", wantKind: "chat", wantReply: "云朵像软软的棉花糖。"},
+		{name: "uncertain fragment", raw: `{"kind":"uncertain","activity_id":"","reply":"咦，豆豆听见一个小声音。"}`, wantKind: "uncertain", wantReply: "咦，豆豆听见一个小声音。"},
 		{name: "missing chat reply", raw: `{"kind":"chat","reply":""}`, wantErr: true},
 		{name: "invalid kind", raw: `{"kind":"other","reply":"汪"}`, wantErr: true},
 	}

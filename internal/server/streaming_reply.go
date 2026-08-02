@@ -100,6 +100,12 @@ func (s *Server) streamReply(
 	}
 
 	reply := dog.SpeechOnlyReply(dog.ClampReply(route.Reply, 100))
+	if route.Kind == "uncertain" {
+		emitErr := emitSpeechSentence(reply, onSentence)
+		return streamedReplyResult{
+			reply: reply, source: "input:uncertain", err: errors.Join(streamErr, emitErr),
+		}
+	}
 	for _, sentence := range stream.Flush() {
 		if err := emitSpeechSentence(sentence, onSentence); err != nil {
 			return streamedReplyResult{reply: reply, source: s.chat.Name(), err: errors.Join(streamErr, err)}

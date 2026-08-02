@@ -29,6 +29,20 @@ func TestEndingActivity(t *testing.T) {
 	}
 }
 
+func TestXiaozhiVoiceStandbyOnlyResumesOnListeningStart(t *testing.T) {
+	client := &xiaozhiConnection{lastActive: time.Now().Add(-time.Minute)}
+	if !client.claimVoiceStandby(30 * time.Second) {
+		t.Fatal("expected inactive conversation to enter voice standby")
+	}
+	if client.claimVoiceStandby(30 * time.Second) {
+		t.Fatal("voice standby was claimed twice")
+	}
+	client.resumeFromStandby()
+	if client.standbySent || time.Since(client.lastActive) > time.Second {
+		t.Fatalf("listening start did not resume activity: %+v", client)
+	}
+}
+
 func TestXiaozhiProductIdleFarewellAndReconnect(t *testing.T) {
 	const deviceID = "02:00:00:00:00:01"
 	const farewell = "豆豆先休息啦，拜拜。"

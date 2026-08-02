@@ -3,6 +3,7 @@ package dog
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -665,14 +666,76 @@ func TestBabbleRemembersRecentCountingRejection(t *testing.T) {
 	}
 }
 
-func TestBabbleDefersToOpenConversationContext(t *testing.T) {
+func TestBabbleDoesNotContinueOpenConversationContext(t *testing.T) {
 	history := []Turn{{
 		User:       "在草丛",
 		Reply:      "豆豆在看草丛呢。你猜小兔子穿花衣服，还是蓝衣服呀？",
 		ActivityID: "surprise_animal",
 	}}
-	if activity, ok := PlanActivityWithHistory("嗯", history); ok {
-		t.Fatalf("contextual babble was intercepted by activity %#v", activity)
+	activity, ok := PlanActivityWithHistory("嗯", history)
+	if !ok || activity.ID != "clap" {
+		t.Fatalf("activity = %#v ok=%v, want context-free babble reply", activity, ok)
+	}
+	if strings.Contains(activity.Reply, "草丛") || strings.Contains(activity.Reply, "兔子") {
+		t.Fatalf("babble reply continued the previous scene: %q", activity.Reply)
+	}
+}
+
+func TestBabbleRepliesDoNotInventATheme(t *testing.T) {
+	for _, activity := range babbleActivities() {
+		for _, invented := range []string{"小火车", "云", "泡泡", "草丛", "兔子"} {
+			if strings.Contains(activity.Reply, invented) {
+				t.Fatalf("babble reply %q invented theme %q", activity.Reply, invented)
+			}
+		}
+	}
+}
+
+func TestOwnerAgeChangesOnBirthday(t *testing.T) {
+	zone := time.FixedZone("test", 8*60*60)
+	birthday := time.Date(2020, time.March, 14, 0, 0, 0, 0, zone)
+	if got := OwnerAge(birthday, time.Date(2024, time.March, 13, 12, 0, 0, 0, zone)); got != 3 {
+		t.Fatalf("age before birthday = %d, want 3", got)
+	}
+	if got := OwnerAge(birthday, time.Date(2024, time.March, 14, 0, 0, 0, 0, zone)); got != 4 {
+		t.Fatalf("age on birthday = %d, want 4", got)
+	}
+}
+
+func TestCurrentChildProfileUsesPrivateEnvironment(t *testing.T) {
+	t.Setenv("PUPBOX_CHILD_NAME", "测试宝宝")
+	t.Setenv("PUPBOX_CHILD_ALIASES", "宝宝,小宝")
+	t.Setenv("PUPBOX_CHILD_BIRTHDAY", "2020-03-14")
+	t.Setenv("PUPBOX_CHILD_KINDERGARTEN_START", "2023-09-01")
+	profile := CurrentChildProfile()
+	if profile.Name != "测试宝宝" || len(profile.Aliases) != 2 {
+		t.Fatalf("profile = %#v", profile)
+	}
+	instructions := ChildProfileInstructions(profile, time.Date(2024, time.March, 14, 0, 0, 0, 0, shanghaiTime))
+	if !strings.Contains(instructions, "现在 4 岁") || !strings.Contains(instructions, "已经到了上幼儿园的阶段") {
+		t.Fatalf("instructions = %q", instructions)
+	}
+}
+
+func TestVisualGroundingDoesNotGuessObject(t *testing.T) {
+	if !NeedsVisualGrounding("豆豆，你看这个是什么？") {
+		t.Fatal("visual question was not detected")
+	}
+	if NeedsVisualGrounding("你觉得云朵像什么？") {
+		t.Fatal("imagination question was treated as a camera request")
+	}
+	if strings.Contains(VisualGroundingReply(), "小车") {
+		t.Fatal("visual grounding reply guessed a real object")
+	}
+}
+
+func TestLooksLikeAmbientLongSpeech(t *testing.T) {
+	long := "我刚才在旁边和家里人讨论明天要去哪里买东西然后顺便把家里的几个箱子整理一下"
+	if !LooksLikeAmbientLongSpeech(long, 12_000) {
+		t.Fatal("long ambient-like speech was not detected")
+	}
+	if LooksLikeAmbientLongSpeech("小兔子在哪里", 12_000) {
+		t.Fatal("short child phrase was treated as long ambient speech")
 	}
 }
 

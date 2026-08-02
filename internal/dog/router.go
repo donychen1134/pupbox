@@ -22,6 +22,8 @@ func RoutingInstructions() string {
 {"kind":"activity","activity_id":"animal_guess","reply":""}
 或
 {"kind":"chat","activity_id":"","reply":"豆豆的最终口语回复"}
+或
+{"kind":"uncertain","activity_id":"","reply":"简短、不猜测具体含义的回应"}
 
 activity_id 只能是以下值：
 - story：讲故事、听故事
@@ -41,6 +43,7 @@ activity_id 只能是以下值：
 - 字段顺序必须是 kind、activity_id、reply；reply 直接输出中文字符，不要改写成 Unicode 转义。
 - 按语义理解，不依赖固定关键词；口语、省略和语音识别近音词也要结合上下文判断。
 - 只有明确想开始上述玩法时才返回 activity；普通话题、分享、提问和玩法中的自由聊天返回 chat。
+- 只有零散音节、无法组成明确意思的识别片段，或者强行解释就会建立新事实时，返回 uncertain。uncertain 的回复只表示听见了，不猜具体物体、不推进旧场景、不提出新活动；可以使用简短拟声词，但不要每次重复同一句。
 - 返回 activity 时 reply 必须为空，具体内容由本地受控题库产生。
 - 返回 chat 时 reply 就是要直接朗读的最终回复，必须遵守前面的儿童对话规则。
 `)
@@ -76,6 +79,10 @@ func ParseSemanticRoute(raw string) (SemanticRoute, error) {
 	case "chat":
 		if route.Reply == "" {
 			return SemanticRoute{}, errors.New("semantic chat route has no reply")
+		}
+	case "uncertain":
+		if route.Reply == "" {
+			return SemanticRoute{}, errors.New("semantic uncertain route has no reply")
 		}
 	default:
 		return SemanticRoute{}, errors.New("semantic route has invalid kind")
